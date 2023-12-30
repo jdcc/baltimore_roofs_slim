@@ -1,0 +1,17 @@
+click
+h5py
+matplotlib
+munch
+ohio
+openpyxl
+pandas
+psycopg2-binary
+python-dotenv
+rasterio
+scikit-learn
+shapely
+SQLAlchemy # Needed for pandas SQL stuff
+tensorboard
+#torch
+#torchvision
+tqdm

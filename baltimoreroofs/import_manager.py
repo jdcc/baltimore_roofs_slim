@@ -1,0 +1,48 @@
+from .data_set_importer import (
+    DataSetImporter,
+    GeodatabaseImporter,
+    VBNImporter,
+    InspectionNodesImporter,
+    DemolitionsImporter,
+)
+from .database import Database
+
+
+class ImportManager:
+    def __init__(self, db: Database, importers: list[DataSetImporter] = []):
+        self.db = db
+        self.importers = importers
+        self.all_importers = [
+            GeodatabaseImporter(db),
+            VBNImporter(db),
+            InspectionNodesImporter(db),
+            DemolitionsImporter(db),
+        ]
+
+    def setup(self):
+        for importer in self.importers:
+            if not importer.is_imported() and importer.is_ready_to_import():
+                importer.import_raw()
+                importer.clean()
+
+    def reset(self):
+        for importer in self.all_importers:
+            importer.reset()
+
+    def assert_setup(self):
+        for importer in self.all_importers:
+            importer.assert_imported()
+
+    def status(self):
+        output = "Import Status\n" + "=" * 70 + "\n"
+        for importer in self.all_importers:
+            output += f"{importer.data_desc:50}: {importer.is_imported()}\n"
+
+        output += "\n"
+        for importer in self.all_importers:
+            try:
+                importer.assert_imported()
+            except AssertionError as e:
+                output += f"{importer.data_desc}: {e}\n"
+
+        return output
