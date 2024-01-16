@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self, creds):
-        self._engine = create_engine(self.connection_string(creds))
+        self.creds = creds
+        self.engine = create_engine(self.connection_string(self.creds))
 
     def table_exists(self, schema, table_name):
         return self.run_query(
@@ -33,7 +34,7 @@ class Database:
     def drop_table(self, schema, table_name):
         self.run(
             sql.SQL("DROP TABLE IF EXISTS {table}").format(
-                sql.Identifier(schema, table_name)
+                table=sql.Identifier(schema, table_name)
             )
         )
 

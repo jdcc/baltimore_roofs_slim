@@ -1,7 +1,7 @@
 FROM python:3.11-slim-bookworm
 
 WORKDIR /usr/src/app
-COPY . .
+COPY . /usr/src/app
 RUN apt-get update && apt-get install -y \
     gdal-bin \
     libgdal-dev \

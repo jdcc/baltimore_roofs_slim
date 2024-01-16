@@ -1,3 +1,5 @@
+import logging
+
 from pathlib import Path
 from typing import Optional
 
@@ -7,13 +9,13 @@ from dotenv import load_dotenv
 from .database import Database, Creds
 from .data_set_importer import (
     GeodatabaseImporter,
-    VBNImporter,
     InspectionNodesImporter,
-    DemolitionsImporter,
 )
 from .import_manager import ImportManager
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 
 
 # db group
@@ -35,12 +37,6 @@ def db(ctx):
     pass
 
 
-@db.command()
-@click.option(
-    "-vbn",
-    "--vacant-building-notices",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
 @click.option(
     "-i",
     "--inspection-notes",
@@ -72,43 +68,31 @@ def import_sheets(
 
 @db.command()
 @click.argument(
-    "geodatabase", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+    "geodatabase",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
 )
 @click.option("--building-outlines", help="layer name that shows building outlines")
 @click.option("--building-permits", help="layer name that has construction permits")
 @click.option("--code-violations", help="layer name that has building code violations")
 @click.option("--data-311", help="layer name that contains 311 data")
+@click.option("--demolitions", help="layer name that contains demolitions data")
 @click.option("--real-estate", help="layer name that includes real estate transactions")
-@click.option("--redlines", help="layer name that shows historical redlines")
+@click.option("--redlining", help="layer name that shows historical redlines")
 @click.option(
     "--tax-parcel-address", help="layer name that contains tax parcel addresses"
 )
+@click.option(
+    "--vacant-building-notices",
+    help="layer name that contains the vacant building notices",
+)
 @click.pass_obj
-def import_gdb(
-    db,
-    geodatabase: Path,
-    building_outlines: str = None,
-    building_permits: str = None,
-    code_violations: str = None,
-    data_311: str = None,
-    real_estate: str = None,
-    redlining: str = None,
-    tax_parcel_address: str = None,
-):
-    if all(
-        arg is None
-        for arg in [
-            building_outlines,
-            building_permits,
-            code_violations,
-            data_311,
-            real_estate,
-            redlining,
-            tax_parcel_address,
-        ]
-    ):
+def import_gdb(db, geodatabase: Path, **layer_map):
+    if all(layer_map[layer] is None for layer in GeodatabaseImporter.REQUIRED_TABLES):
         raise click.UsageError("At least one layer name option must be specified.")
-    importer = GeodatabaseImporter.from_file(db, geodatabase)
+    layer_map = {
+        table: layer for table, layer in layer_map.items() if layer is not None
+    }
+    importer = GeodatabaseImporter.from_file(db, geodatabase, layer_map)
     manager = ImportManager(db, [importer])
     manager.setup()
     click.echo(manager.status())
@@ -126,3 +110,7 @@ def status(db):
 def reset(db):
     ImportManager(db).reset()
     click.echo("The database has been reset.")
+
+
+if __name__ == "__main__":
+    roofs()

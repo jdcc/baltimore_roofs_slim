@@ -1,9 +1,11 @@
+from psycopg2 import sql
+
 from .data_set_importer import (
     DataSetImporter,
     GeodatabaseImporter,
-    VBNImporter,
     InspectionNodesImporter,
-    DemolitionsImporter,
+    RAW_SCHEMA,
+    CLEAN_SCHEMA,
 )
 from .database import Database
 
@@ -14,12 +16,18 @@ class ImportManager:
         self.importers = importers
         self.all_importers = [
             GeodatabaseImporter(db),
-            VBNImporter(db),
             InspectionNodesImporter(db),
-            DemolitionsImporter(db),
         ]
 
+    def ensure_schemas(self):
+        for schema in [RAW_SCHEMA, CLEAN_SCHEMA]:
+            query = sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(
+                schema=sql.Identifier(schema)
+            )
+            self.db.run(query)
+
     def setup(self):
+        self.ensure_schemas()
         for importer in self.importers:
             if not importer.is_imported() and importer.is_ready_to_import():
                 importer.import_raw()

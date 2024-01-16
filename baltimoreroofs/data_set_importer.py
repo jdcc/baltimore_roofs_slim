@@ -1,16 +1,18 @@
 import logging
 from pathlib import Path
 import subprocess
+from typing import Optional
 
+import ohio.ext.pandas  # noqa: F401
 import pandas as pd
 from psycopg2 import sql
 
 from .database import Database
 
 logger = logging.getLogger(__name__)
+
 RAW_SCHEMA = "raw"
 CLEAN_SCHEMA = "processed"
-
 # All the data used is here:
 # https://github.com/dssg/baltimore_roofs/blob/cd1b63f18ef1cb0a1df52e3ea41282ed82102703/src/pipeline/matrix_creator.py#L499
 
@@ -30,7 +32,8 @@ class DataSetImporter:
         """
         src_filename = src_filename or self._src_filename
         assert src_filename is not None, "Need a source file to import"
-        if ".xls" in src_filename:
+        logger.info("Reading data from %s", src_filename)
+        if src_filename.suffix in (".xls", ".xlsx"):
             df = pd.read_excel(src_filename)
         else:
             df = pd.read_csv(src_filename)
@@ -49,6 +52,7 @@ class DataSetImporter:
     def from_file(cls, db: Database, filename: Path):
         importer = cls(db)
         importer._src_filename = filename
+        return importer
 
     def clean(self, table_name=None):
         """Default implemention just copies data from raw to cleaned schemas"""
@@ -97,21 +101,6 @@ class DataSetImporter:
         assert self.is_cleaned(), "Cleaned data is missing"
 
 
-class VBNImporter(DataSetImporter):
-    def __init__(self, db: Database):
-        super().__init__("Vacant building notices", db, "vacant_building_notices")
-
-    def clean(self):
-        # Assemble blocklot in typical form and cast date field
-        self._clean_with_select(
-            """
-            *,
-            rpad("Block", 5) || "Lot" AS blocklot,
-            "DateCreate"::timestamp AS created_date"""
-        )
-        self._add_blocklot_index()
-
-
 class InspectionNodesImporter(DataSetImporter):
     def __init__(self, db: Database):
         super().__init__("Inspection notes", db, "inspection_notes")
@@ -119,23 +108,9 @@ class InspectionNodesImporter(DataSetImporter):
     def clean(self):
         self._clean_with_select(
             """
-            *,
-            datecreate::timestamp AS created_date,
-            rpad("block", 5) || "lot" AS blocklot,
-            lower(detail) AS lowered_detail"""
-        )
-        self._add_blocklot_index()
-
-
-class DemolitionsImporter(DataSetImporter):
-    def __init__(self, db: Database):
-        super().__init__("Demolitions", db, "demolitions")
-
-    def clean(self):
-        self._clean_with_select(
-            """
-            *,
-            BlockLot AS blocklot"""
+            "DateCreate"::timestamp AS created_date,
+            rpad("Block", 5) || "Lot" AS blocklot,
+            lower("Detail") AS lowered_detail"""
         )
         self._add_blocklot_index()
 
@@ -146,15 +121,31 @@ class GeodatabaseImporter(DataSetImporter):
         "building_permits",
         "code_violations",
         "data_311",
+        "demolitions",
         "real_estate",
         "redlining",
         "tax_parcel_address",
+        "vacant_building_notices",
     ]
 
     def __init__(self, db: Database):
         super().__init__("Geodatabase layers", db)
 
-    def import_raw(self, src_filename: Path, layer_map: dict[str, str]):
+    @classmethod
+    def from_file(cls, db: Database, filename: Path, layer_map: dict[str, str]):
+        importer = cls(db)
+        importer._src_filename = filename
+        importer._layer_map = layer_map
+        return importer
+
+    def is_ready_to_import(self):
+        return self._src_filename is not None and self._layer_map is not None
+
+    def import_raw(
+        self,
+        src_filename: Optional[Path] = None,
+        layer_map: Optional[dict[str, str]] = None,
+    ):
         """import data from a geodatabase file
 
         Args:
@@ -168,8 +159,13 @@ class GeodatabaseImporter(DataSetImporter):
                     * real_estate
                     * redlining
                     * tax_parcel_address
+                    * vacant_building_notices
         """
+        src_filename = src_filename or self._src_filename
+        layer_map = layer_map or self._layer_map
+
         for table_name, layer_name in layer_map.items():
+            logger.info('Importing "%s" into table "%s"', layer_name, table_name)
             subprocess.run(
                 'ogr2ogr -progress -f "PostgreSQL" '
                 f"-lco SCHEMA={RAW_SCHEMA} "
@@ -208,13 +204,13 @@ class GeodatabaseImporter(DataSetImporter):
         query = sql.SQL(
             """
             SELECT
-                objectid, ST_Transform(ST_SetSRID(shape, 4326), 2248) AS shape,
+                objectid, ST_Transform(ST_SetSRID(ST_MakePoint(longitude, latitude), 4326), 2248) AS shape,
                 sr_id, service_request_number, sr_type,
-                NULLIF(created_date, 'NULL')::timestamp AS created_date, sr_status,
-                NULLIF(status_date, 'NULL')::timestamp AS status_date, priority,
-                NULLIF(due_date, 'NULL')::timestamp AS due_date, week_number,
+                created_date, sr_status,
+                status_date, priority,
+                due_date, week_number,
                 last_activity,
-                NULLIF(last_activity_date, 'NULL')::timestamp AS last_activity_date,
+                last_activity_date,
                 outcome, method_received, source, street_address, zip_code,
                 neighborhood, latitude, longitude, police_district, council_district,
                 vri_focus_area, case_details, geo_census_tract, geo_bulk_pickup_route,
@@ -223,7 +219,7 @@ class GeodatabaseImporter(DataSetImporter):
                 geo_street_light_service_area, geo_mixed_refuse_schedule,
                 geo_refuse_route_number, geo_tree_region, geo_water_area, geo_sw_quad,
                 block_number_c, details, assigned_to, int_comments,
-                NULLIF(close_date, 'NULL')::timestamp AS close_date, chip_id, sf_source,
+                close_date, chip_id, sf_source,
                 contact_name, contact_email, contact_primary_phone, flex_summary,
                 borough, additional_comments, community_stat_area, sr_parent_id,
                 sr_duplicate_id, sr_parent_id_transfer, hashedrecord, agency
@@ -246,11 +242,16 @@ class GeodatabaseImporter(DataSetImporter):
             ).format(dest=dest)
         )
 
+    def _clean_demolitions(self):
+        self._clean_with_select(
+            "blocklot, id_demo_rfa, datedemofinish_group AS date_demo_finish",
+            "demolitions",
+        )
+        self._add_blocklot_index("demolitions")
+
     def _clean_real_estate(self):
         self._clean_with_select(
-            "*, "
-            "'1899-12-31'::timestamp + "
-            "(date_of_deed || ' days')::interval AS deed_date, "
+            "blocklot, adjusted_price, date_of_deed AS deed_date",
             "real_estate",
         )
         self._add_blocklot_index("real_estate")
@@ -310,18 +311,37 @@ class GeodatabaseImporter(DataSetImporter):
             ).format(dest=dest)
         )
 
+    def _clean_vacant_building_notices(self):
+        self._clean_with_select(
+            "noticenum, blocklot, datenotice AS created_date",
+            "vacant_building_notices",
+        )
+        self._add_blocklot_index("vacant_building_notices")
+
     def clean(self):
         for table in self.REQUIRED_TABLES:
-            getattr(self, f"_clean_{table}")()
+            if self._db.table_exists(RAW_SCHEMA, table):
+                logger.info("Cleaning table %s", table)
+                getattr(self, f"_clean_{table}")()
 
     def raw_is_imported(self):
         return all(
             self._db.table_exists(RAW_SCHEMA, table) for table in self.REQUIRED_TABLES
         )
 
+    def is_cleaned(self):
+        return all(
+            self._db.table_exists(CLEAN_SCHEMA, table) for table in self.REQUIRED_TABLES
+        )
+
     def assert_imported(self):
         for schema in [RAW_SCHEMA, CLEAN_SCHEMA]:
             for table in self.REQUIRED_TABLES:
                 assert self._db.table_exists(
-                    RAW_SCHEMA, table
+                    schema, table
                 ), f'"{table}" is missing from "{schema}" schema'
+
+    def reset(self):
+        for schema in [RAW_SCHEMA, CLEAN_SCHEMA]:
+            for table_name in self.REQUIRED_TABLES:
+                self._db.drop_table(schema, table_name)
