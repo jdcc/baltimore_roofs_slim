@@ -42,9 +42,9 @@ class ImportManager:
             importer.assert_imported()
 
     def status(self):
-        output = "Import Status\n" + "=" * 70 + "\n"
+        output = "Import Status\n" + "=" * 50 + "\n"
         for importer in self.all_importers:
-            output += f"{importer.data_desc:50}: {importer.is_imported()}\n"
+            output += f"{importer.data_desc:40}: {importer.is_imported()}\n"
 
         output += "\n"
         for importer in self.all_importers:

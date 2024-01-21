@@ -1,1 +1,8 @@
+build/
+data/
+*.egg-info
 .env
+__pycache__
+*.qgz
+*.swp
+*.yaml

@@ -11,8 +11,8 @@ from .database import Database
 
 logger = logging.getLogger(__name__)
 
-RAW_SCHEMA = "raw"
-CLEAN_SCHEMA = "processed"
+RAW_SCHEMA = Database.RAW_SCHEMA
+CLEAN_SCHEMA = Database.CLEAN_SCHEMA
 # All the data used is here:
 # https://github.com/dssg/baltimore_roofs/blob/cd1b63f18ef1cb0a1df52e3ea41282ed82102703/src/pipeline/matrix_creator.py#L499
 
@@ -124,7 +124,7 @@ class GeodatabaseImporter(DataSetImporter):
         "demolitions",
         "real_estate",
         "redlining",
-        "tax_parcel_address",
+        "tax_parcel_address",  # building_outlines needs to be before this
         "vacant_building_notices",
     ]
 
@@ -298,6 +298,7 @@ class GeodatabaseImporter(DataSetImporter):
             dest=dest,
         )
         self._db.run(query)
+        self._filter_to_cohort()
         self._db.run(
             sql.SQL(
                 "CREATE INDEX tax_parcel_address_shape_idx ON {dest} USING gist (shape)"
@@ -310,6 +311,28 @@ class GeodatabaseImporter(DataSetImporter):
                 "ON {dest} (blocklot)"
             ).format(dest=dest)
         )
+
+    def _filter_to_cohort(self):
+        # Blocklots that have buildings on them and are zoned as residential
+        query = sql.SQL(
+            """
+            WITH blocklots AS (
+                SELECT
+                    DISTINCT(tpa.blocklot)
+                FROM {tpa_table} AS tpa
+                INNER JOIN {buildings_table} AS b
+                    ON ST_Intersects(b.shape, tpa.shape)
+                WHERE trim(zonecode) IN ('R-6', 'R-7', 'R-8', 'R-9', 'R-10')
+                    AND trim(usegroup) IN ('E', 'R')
+            )
+            DELETE FROM {tpa_table} AS tpa
+            WHERE tpa.blocklot NOT IN (SELECT blocklot FROM blocklots);
+            """
+        ).format(
+            tpa_table=self._db.TPA,
+            buildings_table=sql.Identifier(CLEAN_SCHEMA, "building_outlines"),
+        )
+        self._db.run(query)
 
     def _clean_vacant_building_notices(self):
         self._clean_with_select(

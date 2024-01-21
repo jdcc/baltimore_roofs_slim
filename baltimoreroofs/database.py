@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
+    RAW_SCHEMA = "raw"
+    CLEAN_SCHEMA = "processed"
+    TPA = sql.Identifier(CLEAN_SCHEMA, "tax_parcel_address")
+
     def __init__(self, creds):
         self.creds = creds
         self.engine = create_engine(self.connection_string(self.creds))
