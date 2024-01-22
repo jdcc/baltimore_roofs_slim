@@ -116,6 +116,8 @@ class InspectionNodesImporter(DataSetImporter):
 
 
 class GeodatabaseImporter(DataSetImporter):
+    # The order here matters because there are some dependencies between tables.
+    # Those dependencies can be seen in the assertions in the cleaning functions.
     REQUIRED_TABLES = [
         "building_outlines",
         "building_permits",
@@ -124,7 +126,8 @@ class GeodatabaseImporter(DataSetImporter):
         "demolitions",
         "real_estate",
         "redlining",
-        "tax_parcel_address",  # building_outlines needs to be before this
+        "tax_parcel_address",
+        "ground_truth",
         "vacant_building_notices",
     ]
 
@@ -204,7 +207,12 @@ class GeodatabaseImporter(DataSetImporter):
         query = sql.SQL(
             """
             SELECT
-                objectid, ST_Transform(ST_SetSRID(ST_MakePoint(longitude, latitude), 4326), 2248) AS shape,
+                objectid,
+                ST_Transform(
+                    ST_SetSRID(
+                        ST_MakePoint(longitude, latitude),
+                    4326),
+                2248) AS shape,
                 sr_id, service_request_number, sr_type,
                 created_date, sr_status,
                 status_date, priority,
@@ -249,6 +257,36 @@ class GeodatabaseImporter(DataSetImporter):
         )
         self._add_blocklot_index("demolitions")
 
+    def _clean_ground_truth(self):
+        assert self._db.table_exists(
+            CLEAN_SCHEMA, "tax_parcel_address"
+        ), "tax_parcel_address must be cleaned first"
+        src = sql.Identifier(RAW_SCHEMA, "ground_truth")
+        dest = sql.Identifier(CLEAN_SCHEMA, "ground_truth")
+        # Assume zeros on labeled blocks
+        query = sql.SQL(
+            """
+        WITH labeled_blocks AS (
+            SELECT DISTINCT(trim(substring(blocklot, 0, 6))) AS block
+            FROM {src}
+        )
+        SELECT
+            tpa.blocklot,
+            COALESCE(mainroofpc IN ('10-24', '25-49', '50-99', '100')::int,
+                CASE WHEN trim(substring(tpa.blocklot, 0, 6))
+                    IN (SELECT block FROM labeled_blocks)
+                THEN 0
+                ELSE NULL
+                END) AS label
+        INTO {dest}
+        FROM {tpa_table} tpa
+        LEFT JOIN {src} AS r
+        ON tpa.blocklot = r.blocklot
+        """
+        ).format(tpa_table=self._db.TPA, src=src, dest=dest)
+        self._db.run(query)
+        self._add_blocklot_index("ground_truth")
+
     def _clean_real_estate(self):
         self._clean_with_select(
             "blocklot, adjusted_price, date_of_deed AS deed_date",
@@ -260,6 +298,9 @@ class GeodatabaseImporter(DataSetImporter):
         super().clean("redlining")
 
     def _clean_tax_parcel_address(self):
+        assert self._db.table_exists(
+            CLEAN_SCHEMA, "building_outlines"
+        ), "building_outlines must be cleaned first"
         dest = sql.Identifier(CLEAN_SCHEMA, "tax_parcel_address")
         query = sql.SQL(
             """

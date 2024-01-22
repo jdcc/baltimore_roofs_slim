@@ -2,6 +2,7 @@ build/
 data/
 *.egg-info
 .env
+models/
 __pycache__
 *.qgz
 *.swp

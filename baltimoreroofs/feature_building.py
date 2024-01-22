@@ -322,7 +322,7 @@ def build_dark_pixels_features(blocklots, _, args):
     return features
 
 
-def build_image_model_features(blocklots, max_date, _):
+def build_image_model_features(blocklots, max_date, args):
     if self.transfer_learned_score.model_group_id != "None":
         scores = Evaluator(config.evaluator).model_group_scores(
             self.transfer_learned_score.model_group_id,

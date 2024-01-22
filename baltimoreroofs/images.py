@@ -255,17 +255,17 @@ def reproject_shape(shape, src_crs, dst_crs):
     return transform(project, shape)
 
 
-def fetch_image_from_hdf5(blocklot, f=None, hdfs_filename=None):
+def fetch_image_from_hdf5(blocklot, f=None, hdf5_filename=None):
     assert (
-        f is not None or hdfs_filename is not None
+        f is not None or hdf5_filename is not None
     ), "Must pass either a file handle or a filename"
-    if hdfs_filename:
-        f = h5py.File(hdfs_filename)
+    if hdf5_filename:
+        f = h5py.File(hdf5_filename)
     block, lot = split_blocklot(blocklot)
     data = f[f"{block}/{lot}"]
     arr = np.empty_like(data)
     data.read_direct(arr)
-    if hdfs_filename:
+    if hdf5_filename:
         f.close()
     return arr
 
@@ -280,3 +280,11 @@ def count_datasets_in_hdf5(h5file):
     h5file.visit(is_dataset)
 
     return n_datasets[0]
+
+
+def blocklots_in_hdf5(file: h5py.File):
+    blocklots = []
+    for block in file.keys():
+        for lot in file[block].keys():
+            blocklots.append(f"{block:5}{lot}")
+    return blocklots

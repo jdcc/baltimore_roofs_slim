@@ -1,6 +1,10 @@
+import h5py
 import numpy as np
 import torch
+from psycopg2 import sql
 from torchvision.transforms.functional import rgb_to_grayscale
+
+from .images import blocklots_in_hdf5
 
 # Reorder given matplotlib and pytorch have different order of channel, height, width.
 # pytorch:    [C, H, W]
@@ -15,6 +19,24 @@ def tensor_to_numpy(t):
 
 def numpy_to_tensor(n):
     return torch.from_numpy(n.transpose(NUMPY_TO_TENSOR))
+
+
+def fetch_labels(db):
+    query = sql.SQL("SELECT blocklot, label FROM {label_table}").format(
+        label_table=sql.Identifier(db.CLEAN_SCHEMA, "ground_truth")
+    )
+    results = db.run_query(query)
+    return {row[0]: row[1] for row in results}
+
+
+def blocklots_with_image_and_label(db, hdf5_path) -> dict[str, int]:
+    labels = fetch_labels(db)
+    with h5py.File(hdf5_path) as f:
+        bl_with_images = blocklots_in_hdf5(f)
+        bl_with_image_and_label = set(
+            bl for bl, label in labels.items() if label is not None
+        ) & set(bl_with_images)
+    return {bl: labels[bl] for bl in bl_with_image_and_label}
 
 
 class DarkImageBaseline:

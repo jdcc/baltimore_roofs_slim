@@ -17,6 +17,13 @@ services:
       - db
     volumes:
       - .:/usr/src/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
 
 volumes:
   postgres_data:
