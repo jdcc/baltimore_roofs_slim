@@ -49,7 +49,7 @@ roofs modeling train              Train a new model to classify roof damage seve
 roofs modeling train-image-model  Train an image classification model from aerial photos
 ```
 
-A full run of the project from data loading to model training to prediction looks similar to this series of commands. Use the `--help` argument to each of these commands for a full understanding of what's going on.
+A full run of the project from data loading to model training to prediction looks similar to this series of commands. Use the `--help` argument to each of these commands for a full understanding of what's going on and the `status` command of each subcommand to check that everything is proceeding normally.
 ```bash
 $ roofs db import-sheet --inspection-notes data/InspectorNotes_Roof.xlsx
 $ roofs db import-gdb data/roofdata_2024.gdb \
@@ -71,3 +71,4 @@ $ roofs modeling train-image-model data/images.hdf5
 
 ## Open Questions
 * USEGROUP R vs. USEGROUP E? Dropping blocklots like 4544D030 and 4577B002
+* License?

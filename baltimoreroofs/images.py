@@ -26,8 +26,8 @@ class ImageCropper:
     def __init__(self, db, root_path: str, file_ext="tif"):
         self._db = db
         self.root_path = Path(root_path)
-        self._filenames = []
-        self._file_bounds = {}
+        self._filenames: list[str] = []
+        self._file_bounds: dict[str, Polygon] = {}
         self._file_ext = file_ext
         self._load_images()
 

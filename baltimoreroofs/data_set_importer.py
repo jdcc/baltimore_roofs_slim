@@ -1,6 +1,6 @@
 import logging
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 import ohio.ext.pandas  # noqa: F401
@@ -13,17 +13,16 @@ logger = logging.getLogger(__name__)
 
 RAW_SCHEMA = Database.RAW_SCHEMA
 CLEAN_SCHEMA = Database.CLEAN_SCHEMA
-# All the data used is here:
-# https://github.com/dssg/baltimore_roofs/blob/cd1b63f18ef1cb0a1df52e3ea41282ed82102703/src/pipeline/matrix_creator.py#L499
 
 
 class DataSetImporter:
-    def __init__(self, desc: str, db: Database, table: str = None):
-        self.data_desc = desc
-        self._db = db
-        self.table_name = table
+    def __init__(self, desc: str, db: Database, table: Optional[str] = None):
+        self.data_desc: str = desc
+        self._db: Database = db
+        self.table_name: Optional[str] = table
+        self._src_filename: Optional[Path] = None
 
-    def import_raw(self, src_filename: Path = None):
+    def import_raw(self, src_filename: Optional[Path] = None):
         """import a raw tabular data file into the database
 
         Args:
@@ -50,7 +49,7 @@ class DataSetImporter:
 
     @classmethod
     def from_file(cls, db: Database, filename: Path):
-        importer = cls(db)
+        importer = cls("Missing description", db)
         importer._src_filename = filename
         return importer
 
@@ -64,7 +63,7 @@ class DataSetImporter:
             )
         )
 
-    def _clean_with_select(self, select_sql: str, table_name: str = None):
+    def _clean_with_select(self, select_sql: str, table_name: Optional[str] = None):
         """Cleaning is often careful select statements into a new field"""
         table_name = table_name or self.table_name
         self._db.run(
@@ -133,6 +132,7 @@ class GeodatabaseImporter(DataSetImporter):
 
     def __init__(self, db: Database):
         super().__init__("Geodatabase layers", db)
+        self._layer_map: dict[str, str] = {}
 
     @classmethod
     def from_file(cls, db: Database, filename: Path, layer_map: dict[str, str]):

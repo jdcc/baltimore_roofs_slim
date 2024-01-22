@@ -230,11 +230,13 @@ class ImageModel:
         return self
 
     def forward(self, X: list[str]) -> dict[str, float]:
-        df = pd.DataFrame({"blocklot": X})
-        df["label"] = 0  # label is not used for prediction
-
         dataloader = get_dataloader(
-            df, self.batch_size, angle_variations=[0], shuffle=False
+            X,
+            [0] * len(X),
+            self.hdf5,
+            self.batch_size,
+            angle_variations=[0],
+            shuffle=False,
         )
 
         self.model.eval()
@@ -311,8 +313,7 @@ class BlocklotDataset(torch.utils.data.Dataset):
             val for val in self.blocklot_ids for _ in range(self.angles_len)
         ]
 
-        self.labels = labels
-        self.labels = [val for val in self.labels for _ in range(self.angles_len)]
+        self.labels: list[str] = [val for val in labels for _ in range(self.angles_len)]
         if isinstance(hdf5, Path):
             hdf5 = h5py.File(hdf5)
         self.hdf5 = hdf5
