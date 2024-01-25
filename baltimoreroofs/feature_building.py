@@ -1,45 +1,50 @@
 from collections import defaultdict
 from datetime import timedelta
 
+from psycopg2 import sql
 from tqdm.auto import tqdm
 
-from database import run_query
-from models import DarkImageBaseline
+from .images import fetch_image_from_hdf5
+from .models import DarkImageBaseline
 
 
-def build_building_permits_features(blocklots, max_date, _):
-    results = run_query(
-        """
+def build_building_permits_features(db, blocklots, max_date, _):
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT
             tp.blocklot,
-            COUNT(DISTINCT id_permit) AS n_permits
-        FROM processed.tax_parcel_address AS tp
-        LEFT JOIN raw.building_construction_permits bcp
+            COUNT(DISTINCT csm_id) AS n_permits
+        FROM {tpa} AS tp
+        LEFT JOIN {table} bcp
             ON tp.blocklot = bcp.blocklot
             AND bcp.csm_issued_date <= %s
         WHERE
         tp.blocklot IN %s
         GROUP BY tp.blocklot
-    """,
+    """
+        ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "building_permits")),
         (max_date, tuple(blocklots)),
     )
-    return {"n_construction_permits": {r["blocklot"]: r["n_permits"] for r in results}}
+    return {"n_building_permits": {r["blocklot"]: r["n_permits"] for r in results}}
 
 
-def build_code_violations_features(blocklots, max_date, _):
-    results = run_query(
-        """
+def build_code_violations_features(db, blocklots, max_date, _):
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT
             tpa.blocklot,
             count(distinct cva.noticenum) AS n_code_violations
-        FROM processed.tax_parcel_address tpa
-        LEFT JOIN processed.code_violations_after_2017 cva
+        FROM {tpa} tpa
+        LEFT JOIN {table} cva
             ON tpa.blocklot = cva.blocklot
             AND cva.datecreate <= %s
             AND cva.statusorig = 'NOTICE APPROVED'
         WHERE tpa.blocklot IN %s
         GROUP BY tpa.blocklot;
-    """,
+    """
+        ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "code_violations")),
         (max_date, tuple(blocklots)),
     )
     return {
@@ -49,33 +54,35 @@ def build_code_violations_features(blocklots, max_date, _):
     }
 
 
-def build_data_311_features(blocklots, max_date, args):
+def build_data_311_features(db, blocklots, max_date, args):
     assert "radii" in args
     features = {}
     for radius in args["radii"]:
-        features.update(build_311_radius(blocklots, max_date, radius))
-    features.update(build_311_type_features(blocklots, max_date, args["radii"]))
+        features.update(build_311_radius(db, blocklots, max_date, radius))
+    features.update(build_311_type_features(db, blocklots, max_date, args["radii"]))
     return features
 
 
-def build_311_radius(blocklots, max_date, radius):
-    query = """
+def build_311_radius(db, blocklots, max_date, radius):
+    query = sql.SQL(
+        """
         SELECT
             blocklot,
             COUNT(DISTINCT service_request_number) AS n_calls
-        FROM processed.tax_parcel_address AS tp
-        LEFT JOIN processed.data_311 AS d
-            ON ST_DWithin(d.shape, tp.wkb_geometry, %s)
+        FROM {tpa} AS tp
+        LEFT JOIN {table} AS d
+            ON ST_DWithin(d.shape, tp.shape, %s)
             AND d.longitude IS NOT null
             AND created_date <= %s
         WHERE blocklot IN %s
         GROUP BY blocklot
     """
+    ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "data_311"))
     key = f"calls_to_311_{radius}ft"
     output = {
         key: {
             row["blocklot"]: row["n_calls"]
-            for row in run_query(query, (radius, max_date, tuple(blocklots)))
+            for row in db.run_query(query, (radius, max_date, tuple(blocklots)))
         }
     }
     for blocklot in blocklots:
@@ -84,7 +91,7 @@ def build_311_radius(blocklots, max_date, radius):
     return output
 
 
-def build_311_type_features(blocklots, max_date, radii):
+def build_311_type_features(db, blocklots, max_date, radii):
     types = [
         "HCD-Illegal Dumping",
         "HCD-Vacant Building",
@@ -97,20 +104,22 @@ def build_311_type_features(blocklots, max_date, radii):
     features = {}
     for radius in radii:
         for type in types:
-            results = run_query(
-                """
+            results = db.run_query(
+                sql.SQL(
+                    """
                 SELECT
                     blocklot,
                     COUNT(DISTINCT service_request_number) AS n_calls
-                FROM processed.tax_parcel_address AS tp
-                LEFT JOIN processed.data_311 AS d
-                    ON ST_DWithin(d.shape, tp.wkb_geometry, %s)
+                FROM {tpa} AS tp
+                LEFT JOIN {table} AS d
+                    ON ST_DWithin(d.shape, tp.shape, %s)
                     AND d.longitude IS NOT NULL
                     AND created_date <= %s
                     AND sr_type = %s
                 WHERE blocklot IN %s
                 GROUP BY blocklot
-            """,
+            """
+                ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "data_311")),
                 (radius, max_date, type, tuple(blocklots)),
             )
             type_name = type.replace("HCD-", "").lower().replace(" ", "_")
@@ -119,40 +128,46 @@ def build_311_type_features(blocklots, max_date, radii):
     return features
 
 
-def build_demolition_features(blocklots, max_date, _):
-    results = run_query(
-        """
+def build_demolitions_features(db, blocklots, max_date, _):
+    results = db.run_query(
+        sql.SQL(
+            """
             SELECT
                 tp.blocklot,
-                COUNT(distinct "ID_Demo_RFA") AS n_demos
-            FROM processed.tax_parcel_address AS tp
-            LEFT JOIN raw.demolitions_as_of_20220706 demo
-                ON tp.blocklot = demo."BlockLot"
-                AND demo."DateDemoFinish" <= %s
+                COUNT(DISTINCT id_demo_rfa) AS n_demos
+            FROM {tpa} AS tp
+            LEFT JOIN {table} demo
+                ON tp.blocklot = demo.blocklot
+                AND demo.date_demo_finish <= %s
             WHERE
             tp.blocklot IN %s
             GROUP BY tp.blocklot
-        """,
+        """
+        ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "demolitions")),
         (max_date, tuple(blocklots)),
     )
     return {"n_demolitions": {r["blocklot"]: r["n_demos"] for r in results}}
 
 
-def build_inspection_notes_features(blocklots, max_date, args):
+def build_inspection_notes_features(db, blocklots, max_date, args):
     assert "words" in args
     features = {}
     for word in args["words"]:
-        results = run_query(
-            f"""
+        results = db.run_query(
+            sql.SQL(
+                f"""
             SELECT tpa.blocklot, COUNT(DISTINCT lowered_detail) AS n_mentions
-            FROM processed.tax_parcel_address tpa
-            LEFT JOIN processed.inspection_notes insp
+            FROM {{tpa}} tpa
+            LEFT JOIN {{table}} insp
                 ON tpa.blocklot = insp.blocklot
                 AND insp.created_date <= %s
                 AND insp.lowered_detail LIKE '%%{word}%%'
             WHERE tpa.blocklot IN %s
             GROUP BY tpa.blocklot
-        """,
+        """
+            ).format(
+                tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "inspection_notes")
+            ),
             (max_date, tuple(blocklots)),
         )
         features[f"n_insp_note_mentions_of_{word}"] = {
@@ -161,9 +176,10 @@ def build_inspection_notes_features(blocklots, max_date, args):
     return features
 
 
-def build_real_estate_features(blocklots, max_date, _):
-    results = run_query(
-        """
+def build_real_estate_features(db, blocklots, max_date, _):
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT
             tp.blocklot,
             EXTRACT(EPOCH FROM(%s - COALESCE(LAST_VALUE(red.deed_date) OVER w,
@@ -171,13 +187,14 @@ def build_real_estate_features(blocklots, max_date, _):
                     AS secs_since_last_sale,
             COALESCE(LAST_VALUE(red.adjusted_price) OVER w, 0) AS last_sale_price,
             LAST_VALUE(red.adjusted_price) OVER w IS NULL AS last_sale_unknown
-        FROM processed.tax_parcel_address AS tp
-        LEFT JOIN processed.real_estate_data red
+        FROM {tpa} AS tp
+        LEFT JOIN {table} red
             ON tp.blocklot = red.blocklot
         AND red.deed_date <= %s
         WHERE tp.blocklot IN %s
         WINDOW w AS (PARTITION BY red.blocklot ORDER BY deed_date DESC)
-        """,
+        """
+        ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "real_estate")),
         (max_date, max_date, tuple(blocklots)),
     )
     return {
@@ -189,16 +206,18 @@ def build_real_estate_features(blocklots, max_date, _):
     }
 
 
-def build_redlining_features(blocklots, *_):
+def build_redlining_features(db, blocklots, *_):
     redline_classes = ["A", "B", "C", "D", "AUD", "BUD"]
-    results = run_query(
-        """
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT tpa.blocklot, red."class" AS redline_class
-        FROM processed.tax_parcel_address tpa
-        LEFT JOIN raw.redlining as red
-        ON ST_Contains(red.shape, tpa.wkb_geometry)
+        FROM {tpa} tpa
+        LEFT JOIN {table} AS red
+        ON ST_Contains(red.shape, tpa.shape)
         WHERE tpa.blocklot IN %s
-    """,
+    """
+        ).format(tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "redlining")),
         (tuple(blocklots),),
     )
     features = {}
@@ -210,13 +229,14 @@ def build_redlining_features(blocklots, *_):
     return features
 
 
-def build_vacant_building_notices_features(blocklots, max_date, args):
+def build_vacant_building_notices_features(db, blocklots, max_date, args):
     if "interpolation_date" not in args:
-        interpolation_date = first_vbn_notice_date() - timedelta(days=365)
+        interpolation_date = first_vbn_notice_date(db) - timedelta(days=365)
     else:
         interpolation_date = args["interpolation_date"]
-    results = run_query(
-        """
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT
             tpa.blocklot,
             EXTRACT(
@@ -225,15 +245,19 @@ def build_vacant_building_notices_features(blocklots, max_date, args):
             EXTRACT(
                 EPOCH FROM (%s - COALESCE(max(created_date), %s)))
                 AS secs_since_last_created_date,
-            COUNT(distinct vbn."NoticeNum") AS n_vbns
-            FROM processed.tax_parcel_address tpa
-        LEFT JOIN processed.all_vacantbuilding_notices as vbn
+            COUNT(distinct vbn.noticenum) AS n_vbns
+        FROM {tpa} tpa
+        LEFT JOIN {table} as vbn
             ON vbn.blocklot = tpa.blocklot
             AND vbn.created_date <= %s
-            AND vbn."FileType" = 'New Violation Notice'
         WHERE tpa.blocklot IN %s
         GROUP BY tpa.blocklot;
-    """,
+    """
+            # TODO Don't need this anymore?
+            # AND vbn."FileType" = 'New Violation Notice'
+        ).format(
+            tpa=db.TPA, table=sql.Identifier(db.CLEAN_SCHEMA, "vacant_building_notices")
+        ),
         (
             max_date,
             interpolation_date,
@@ -254,27 +278,32 @@ def build_vacant_building_notices_features(blocklots, max_date, args):
     }
 
 
-def first_vbn_notice_date():
-    return run_query(
-        """
+def first_vbn_notice_date(db):
+    return db.run_query(
+        sql.SQL(
+            """
         SELECT min(created_date)
-        FROM processed.all_vacantbuilding_notices
+        FROM {table}
         """
+        ).format(table=sql.Identifier(db.CLEAN_SCHEMA, "vacant_building_notices"))
     )[0][0]
 
 
-def fetch_median_year_built():
-    query = """
-        SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY year_build) AS year
-        FROM processed.tax_parcel_address
-    """
-    return run_query(query)[0]["year"]
-
-
-def build_year_built_features(blocklots, max_date, args):
-    assert "median_year_built" in args
-    results = run_query(
+def fetch_median_year_built(db):
+    query = sql.SQL(
         """
+        SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY year_build) AS year
+        FROM {table}
+    """
+    ).format(table=db.TPA)
+    return db.run_query(query)[0]["year"]
+
+
+def build_year_built_features(db, blocklots, max_date, args):
+    assert "median_year_built" in args
+    results = db.run_query(
+        sql.SQL(
+            """
         SELECT
             blocklot,
             CASE
@@ -284,9 +313,10 @@ def build_year_built_features(blocklots, max_date, args):
             END::int AS year_built,
             (year_build = 0)
                 OR (year_build > extract('year' FROM %s)) AS year_built_unknown
-        FROM processed.tax_parcel_address tpa
+        FROM {table} tpa
         WHERE blocklot IN %s
-    """,
+    """
+        ).format(table=db.TPA),
         (
             args["median_year_built"],
             max_date,
@@ -303,7 +333,7 @@ def build_year_built_features(blocklots, max_date, args):
     }
 
 
-def build_dark_pixels_features(blocklots, _, args):
+def build_dark_pixels_features(_, blocklots, __, args):
     assert "thresholds" in args
     features = defaultdict(dict)
     threshold_models = {}
@@ -311,7 +341,7 @@ def build_dark_pixels_features(blocklots, _, args):
         threshold_models[threshold] = DarkImageBaseline(threshold)
 
     for blocklot in tqdm(blocklots, smoothing=0, desc="Loading images"):
-        image = fetch_image(blocklot)
+        image = fetch_image_from_hdf5(blocklot, hdf5_filename=args["hdf5"])
         for threshold in args["thresholds"]:
             feature_name = f"pct_pixels_darker_than_{threshold}"
             model = threshold_models[threshold]
@@ -322,21 +352,17 @@ def build_dark_pixels_features(blocklots, _, args):
     return features
 
 
-def build_image_model_features(blocklots, max_date, args):
-    if self.transfer_learned_score.model_group_id != "None":
-        scores = Evaluator(config.evaluator).model_group_scores(
-            self.transfer_learned_score.model_group_id,
-            self.transfer_learned_score.schema_prefix,
-        )
-        blocklot_scores = scores.score.to_dict()
-    elif self.transfer_learned_score.model_id:
-        blocklot_scores = Predictor.load_all_preds(
-            self.transfer_learned_score.model_id,
-            self.transfer_learned_score.schema_prefix,
-        )
+def build_image_model_features(db, blocklots, max_date, args):
+    resp = db.run_query(
+        sql.SQL("SELECT blocklot, score FROM {table} WHERE blocklot IN %s").format(
+            table=sql.Identifier(db.OUTPUT_SCHEMA, "image_model_predictions")
+        ),
+        (blocklots,),
+    )
+    blocklot_scores = {row["blocklot"]: row["score"] for row in resp}
     return {
-        "transfer_learned_score": {b: blocklot_scores.get(b, 0.0) for b in blocklots},
-        "transfer_learned_score_unknown": {
+        "image_model_score": blocklot_scores,
+        "image_model_score_unknown": {
             b: int(b not in blocklot_scores) for b in blocklots
         },
     }

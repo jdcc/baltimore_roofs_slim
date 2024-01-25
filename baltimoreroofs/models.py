@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 import torch
-from psycopg2 import sql
+from psycopg2 import sql, errors
 from torchvision.transforms.functional import rgb_to_grayscale
 
 from .images import blocklots_in_hdf5
@@ -19,6 +19,10 @@ def tensor_to_numpy(t):
 
 def numpy_to_tensor(n):
     return torch.from_numpy(n.transpose(NUMPY_TO_TENSOR))
+
+
+def is_gpu_available():
+    return torch.cuda.is_available()
 
 
 def fetch_labels(db):
@@ -56,3 +60,50 @@ class DarkImageBaseline:
         X = rgb_to_grayscale(numpy_to_tensor(X).unsqueeze(0))
         is_darker = torch.where(X.isnan(), X, X < self.threshold).to(torch.float32)
         return is_darker.nanmean(axis=(2, 3), dtype=torch.float32).squeeze().item()
+
+
+def write_completed_preds_to_db(db, model_name, preds: dict[str, float]):
+    create_predictions_table(db, model_name)
+    rows = []
+    for blocklot, pred in preds.items():
+        if pred is not None:
+            pred = round(pred, 6)
+        rows.append([blocklot, pred])
+    db.batch_insert(
+        sql.SQL(
+            """
+            INSERT INTO {table} (blocklot, score) VALUES %s
+            ON CONFLICT (blocklot) DO UPDATE SET score = EXCLUDED.score
+        """
+        ).format(table=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions")),
+        rows,
+    )
+
+
+def create_predictions_table(db, model_name):
+    db.run(
+        sql.SQL("CREATE SCHEMA IF NOT EXISTS {pred_schema}").format(
+            pred_schema=sql.Identifier(db.OUTPUTS_SCHEMA)
+        )
+    )
+    db.run(
+        sql.SQL(
+            """
+        CREATE TABLE IF NOT EXISTS {preds_table} (
+            blocklot varchar(10),
+            score real
+        )
+    """
+        ).format(
+            preds_table=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions"),
+        )
+    )
+    try:
+        db.run(
+            sql.SQL("CREATE UNIQUE INDEX {index} ON {dest} (blocklot)").format(
+                index=sql.Identifier(f"{model_name}_predictions_blocklot_idx"),
+                dest=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions"),
+            )
+        )
+    except errors.DuplicateTable:
+        pass

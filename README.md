@@ -21,7 +21,7 @@ And two models:
 
 The easiest way to get this project running is with Docker. Make sure you have [Docker](https://docs.docker.com/manuals/) ([Docker Engine](https://docs.docker.com/engine/), either by itself or through [Docker Desktop](https://docs.docker.com/desktop/)) and [Docker Compose](https://docs.docker.com/compose/) installed. From a command shell in the project directory, just run `docker-compose up`. This will install and run everything required to use this project.
 
-Once the containers are running, you can start interacting with the app by running bash in the main container with `docker-compose exec roofs bash`.
+Once the containers are running, you can start interacting with the app by running bash in the main container with `docker-compose run roofs bash`.
 
 For GPU acceleration of model training and inference, you need a GPU. If you've using a CUDA-enabled NVIDIA GPU, you can install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and the existing code and Docker setup should handle running everything on the GPU.
 

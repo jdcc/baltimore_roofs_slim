@@ -132,10 +132,12 @@ class GeodatabaseImporter(DataSetImporter):
 
     def __init__(self, db: Database):
         super().__init__("Geodatabase layers", db)
-        self._layer_map: dict[str, str] = {}
+        self._layer_map: Optional[dict[str, str]] = {}
 
     @classmethod
-    def from_file(cls, db: Database, filename: Path, layer_map: dict[str, str]):
+    def from_file(
+        cls, db: Database, filename: Path, layer_map: Optional[dict[str, str]] = None
+    ):
         importer = cls(db)
         importer._src_filename = filename
         importer._layer_map = layer_map

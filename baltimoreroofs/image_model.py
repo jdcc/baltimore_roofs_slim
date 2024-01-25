@@ -7,7 +7,6 @@ from typing import Mapping
 
 import h5py
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim

@@ -2,8 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-import feature_building
-from config import config
+from . import feature_building
 
 # To make predictions, I need data and a model. No labels. No splits. No tables in the database.
 
@@ -36,8 +35,29 @@ class MatrixCreator:
         "vacant_building_notices",
     ]
 
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, db, hdf5):
+        self.db = db
+        self.hdf5 = hdf5
+        self.config = {
+            "data_311": {"radii": [10, 50, 100, 200]},
+            "inspection_notes": {
+                "words": [
+                    "roof",
+                    "collaps",
+                    "fall",
+                    "brick",
+                    "damage",
+                    "unsafe",
+                    "porch",
+                    "caved",
+                    "caving",
+                ]
+            },
+            "dark_pixels": {
+                "thresholds": [10, 20, 30, 40, 60, 80, 130],
+                "hdf5": self.hdf5,
+            },
+        }
 
     def build_features(self, blocklots, max_date):
         features = {}
@@ -48,7 +68,7 @@ class MatrixCreator:
         ]:
             features.update(
                 getattr(feature_building, f"build_{table}_features")(
-                    blocklots, max_date, self.config["features"].get(table, {})
+                    self.db, blocklots, max_date, self.config.get(table, {})
                 )
             )
 
@@ -71,7 +91,7 @@ class MatrixCreator:
         if imputed_year is None:
             imputed_year = self.year_built_imputed
         if imputed_year is None:
-            imputed_year = feature_building.fetch_median_year_built()
+            imputed_year = feature_building.fetch_median_year_built(self.db)
         assert imputed_year is not None
 
         if max_date is None:

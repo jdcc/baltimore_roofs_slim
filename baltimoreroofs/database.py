@@ -1,7 +1,7 @@
 from collections import namedtuple
 import logging
 import os
-from typing import Any
+from typing import Any, Sequence
 
 import psycopg2
 import psycopg2.extras
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class Database:
     RAW_SCHEMA = "raw"
     CLEAN_SCHEMA = "processed"
+    OUTPUTS_SCHEMA = "outputs"
     TPA = sql.Identifier(CLEAN_SCHEMA, "tax_parcel_address")
 
     def __init__(self, creds):
@@ -88,6 +89,22 @@ class Database:
         cur.close()
         conn.close()
         return results
+
+    def batch_insert(self, query: str, values: Sequence[tuple[Any, ...]]) -> None:
+        """Insert lots of data.
+
+        Args:
+            query (str): SQL query with "VALUES %s"
+            values (list[tuple[Any, ...]]): All the values to insert
+        """
+        conn = psycopg2.connect(self.connection_string())
+        cur = conn.cursor()
+
+        logger.debug("Inserting %s values", len(values))
+        psycopg2.extras.execute_values(cur, query, values)
+        conn.commit()
+        cur.close()
+        conn.close()
 
     @staticmethod
     def connection_string(creds=None) -> str:

@@ -1,31 +1,36 @@
+import gc
 import logging
-
-from collections import Counter
-from pathlib import Path
 import pickle
 import random
+from collections import Counter
+from datetime import date
+from pathlib import Path
 from typing import Optional
 
 import click
-from dotenv import load_dotenv
 import h5py
 import numpy as np
+from dotenv import load_dotenv
 from PIL import Image
 
-from .database import Database, Creds
-from .data_set_importer import (
-    GeodatabaseImporter,
-    InspectionNodesImporter,
-)
+from .data_set_importer import GeodatabaseImporter, InspectionNodesImporter
+from .database import Creds, Database
+from .image_model import ImageModel
 from .images import (
     ImageCropper,
+    blocklots_in_hdf5,
     count_datasets_in_hdf5,
     fetch_image_from_hdf5,
-    blocklots_in_hdf5,
 )
 from .import_manager import ImportManager
-from .image_model import ImageModel
-from .models import fetch_labels, blocklots_with_image_and_label
+
+from .matrix_creator import MatrixCreator
+from .models import (
+    blocklots_with_image_and_label,
+    fetch_labels,
+    is_gpu_available,
+    write_completed_preds_to_db,
+)
 from .utils import fetch_all_blocklots
 
 load_dotenv()
@@ -96,11 +101,14 @@ def modeling_status(obj, hdf5):
     db, models_path = obj["db"], obj["models_path"]
     blocklots = fetch_all_blocklots(db, db.CLEAN_SCHEMA)
     labels = fetch_labels(db)
-    click.echo("Modeling Status\n" + "=" * 50)
-    click.echo(f"The database contains {len(blocklots):,} relevant blocklots.")
+    click.echo("Modeling Status\n" + "=" * 50 + "\n")
+    click.echo(
+        f"GPU acceleration is{ 'NOT' if not is_gpu_available() else ''} available.\n"
+    )
+    click.echo(f"The database contains {len(blocklots):,} relevant blocklots.\n")
     label_str = build_label_str(labels)
     click.echo(
-        f"The database contains the following ground-truth labels:\n  {label_str}"
+        f"The database contains the following ground-truth labels:\n  {label_str}\n"
     )
     bl_with_image_and_label = blocklots_with_image_and_label(db, hdf5)
     click.echo(
@@ -108,7 +116,7 @@ def modeling_status(obj, hdf5):
         "images and labels."
     )
     label_str = build_label_str(bl_with_image_and_label)
-    click.echo(f"    They have these ground-truth labels:\n  {label_str}")
+    click.echo(f"They have these ground-truth labels:\n  {label_str}\n")
     blocklots = random.sample(sorted(bl_with_image_and_label), k=3)
     click.echo(f"    Here are a few: {blocklots}")
     image_model_exists = Path(models_path / "image_model.pkl").is_file()
@@ -139,21 +147,45 @@ def train_image_model(obj, hdf5):
         hdf5,
         batch_size=128,
         learning_rate=1e-4,
-        num_epochs=20,
+        angle_variations=[0, 20, 45, 60, 90],
+        num_epochs=5,
         unfreeze=1,
-        dropout=0.1,
+        dropout=0.9,
     )
     blocklots = blocklots_with_image_and_label(db, hdf5)
     X, y = list(blocklots.keys()), list(blocklots.values())
     model.fit(X, y)
     with open(models_path / "image_model.pkl", "wb") as f:
         pickle.dump(model.to_save(), f, protocol=5)
+    with h5py.File(hdf5) as f:
+        blocklots = blocklots_in_hdf5(f)
+    gc.collect()
+    preds = model.forward(blocklots)
+    write_completed_preds_to_db(db, "image_model", preds)
 
 
 @modeling.command()
-def train():
-    """Train a new model to classify roof damage severity"""
-    pass
+@click.argument(
+    "hdf5",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+)
+@click.option(
+    "--max-date",
+    "-d",
+    help="Most recent date to consider",
+    default="2022-01-01",
+    type=click.DateTime(),
+)
+@click.pass_obj
+def train(obj, hdf5, max_date):
+    """Train a new model to classify roof damage severity
+
+    HDF5 is the path to the hdf5 file containing blocklot images.
+    """
+    blocklots = blocklots_with_image_and_label(obj["db"], hdf5)
+    X_creator = MatrixCreator(obj["db"], hdf5)
+    X = X_creator.build_features(blocklots, max_date)
+    print(X)
 
 
 @roofs.group()
