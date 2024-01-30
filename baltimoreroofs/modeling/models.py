@@ -1,10 +1,14 @@
+from pathlib import Path
+
 import h5py
+import joblib
 import numpy as np
 import torch
-from psycopg2 import sql, errors
+from psycopg2 import errors, sql
+from sklearn.ensemble import RandomForestClassifier
 from torchvision.transforms.functional import rgb_to_grayscale
 
-from .images import blocklots_in_hdf5
+from ..data import fetch_blocklots_imaged
 
 # Reorder given matplotlib and pytorch have different order of channel, height, width.
 # pytorch:    [C, H, W]
@@ -33,10 +37,10 @@ def fetch_labels(db):
     return {row[0]: row[1] for row in results}
 
 
-def blocklots_with_image_and_label(db, hdf5_path) -> dict[str, int]:
+def fetch_blocklots_imaged_and_labeled(db, hdf5_path) -> dict[str, int]:
     labels = fetch_labels(db)
     with h5py.File(hdf5_path) as f:
-        bl_with_images = blocklots_in_hdf5(f)
+        bl_with_images = fetch_blocklots_imaged(f)
         bl_with_image_and_label = set(
             bl for bl, label in labels.items() if label is not None
         ) & set(bl_with_images)
@@ -75,7 +79,7 @@ def write_completed_preds_to_db(db, model_name, preds: dict[str, float]):
             INSERT INTO {table} (blocklot, score) VALUES %s
             ON CONFLICT (blocklot) DO UPDATE SET score = EXCLUDED.score
         """
-        ).format(table=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions")),
+        ).format(table=sql.Identifier(db.OUTPUT_SCHEMA, f"{model_name}_predictions")),
         rows,
     )
 
@@ -83,7 +87,7 @@ def write_completed_preds_to_db(db, model_name, preds: dict[str, float]):
 def create_predictions_table(db, model_name):
     db.run(
         sql.SQL("CREATE SCHEMA IF NOT EXISTS {pred_schema}").format(
-            pred_schema=sql.Identifier(db.OUTPUTS_SCHEMA)
+            pred_schema=sql.Identifier(db.OUTPUT_SCHEMA)
         )
     )
     db.run(
@@ -95,15 +99,26 @@ def create_predictions_table(db, model_name):
         )
     """
         ).format(
-            preds_table=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions"),
+            preds_table=sql.Identifier(db.OUTPUT_SCHEMA, f"{model_name}_predictions"),
         )
     )
     try:
         db.run(
             sql.SQL("CREATE UNIQUE INDEX {index} ON {dest} (blocklot)").format(
                 index=sql.Identifier(f"{model_name}_predictions_blocklot_idx"),
-                dest=sql.Identifier(db.OUTPUTS_SCHEMA, f"{model_name}_predictions"),
+                dest=sql.Identifier(db.OUTPUT_SCHEMA, f"{model_name}_predictions"),
             )
         )
     except errors.DuplicateTable:
         pass
+
+
+def load_model(path: Path):
+    with open(path, "rb") as f:
+        model_details = joblib.load(f)
+    model = model_details["model"]
+    if "class" in model_details:
+        model_class = model_details["class"]
+        if hasattr(model_class, "load"):
+            model = model_class.load(model)
+    return model, model_details

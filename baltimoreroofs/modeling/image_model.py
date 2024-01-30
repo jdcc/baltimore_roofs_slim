@@ -19,7 +19,7 @@ from torchvision import models
 from tqdm.auto import tqdm
 
 # from .config import config
-from .images import fetch_image_from_hdf5
+from ..data import fetch_image_from_hdf5
 from .models import numpy_to_tensor
 
 # TODO put into config

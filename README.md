@@ -39,7 +39,7 @@ roofs db import-sheet             Import spreadsheets of data
 roofs db reset                    Remove all data from the database
 roofs db status                   Show the status of the database
 
-roofs images crop-to-blocklots    Crop aerial image tiles into individual blocklot images
+roofs images crop                 Crop aerial image tiles into individual blocklot images
 roofs images dump                 Dump JPEG images of blocklots to disk for further...
 roofs images status               Show the status of the blocklot image setup process
 
@@ -64,8 +64,9 @@ $ roofs db import-gdb data/roofdata_2024.gdb \
   --redlining=redlining \
   --vacant-building-notices=open_notice_vacant
 $ roofs db status
-$ roofs images crop-to-blocklots data/images data/images.hdf5
+$ roofs images crop data/images data/images.hdf5
 $ roofs images status data/images.hdf5
+$ roofs modeling status data/images.hdf5
 $ roofs modeling train-image-model data/images.hdf5
 ```
 

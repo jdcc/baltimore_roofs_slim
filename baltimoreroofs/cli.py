@@ -5,39 +5,42 @@ import random
 from collections import Counter
 from datetime import date
 from pathlib import Path
+from pprint import pprint
 from typing import Optional
 
 import click
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 from dotenv import load_dotenv
 from PIL import Image
+from sklearn.model_selection import train_test_split
 
-from .data_set_importer import GeodatabaseImporter, InspectionNodesImporter
-from .database import Creds, Database
-from .image_model import ImageModel
-from .images import (
+from .data import (
+    Creds,
+    Database,
+    GeodatabaseImporter,
     ImageCropper,
-    blocklots_in_hdf5,
+    ImportManager,
+    InspectionNotesImporter,
+    MatrixCreator,
     count_datasets_in_hdf5,
+    fetch_all_blocklots,
     fetch_image_from_hdf5,
 )
-from .import_manager import ImportManager
-
-from .matrix_creator import MatrixCreator
-from .models import (
-    blocklots_with_image_and_label,
-    fetch_labels,
-    is_gpu_available,
-    write_completed_preds_to_db,
+from .modeling import get_modeling_status, train_image_model
+from .modeling.image_model import ImageModel
+from .modeling.models import (
+    load_model,
 )
-from .utils import fetch_all_blocklots
+from .modeling.training import Trainer, flatten_X_y
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
 this_dir = Path(__file__).resolve().parent
+SEED = 0
 
 
 # db group
@@ -80,13 +83,6 @@ def predict():
     pass
 
 
-def build_label_str(labels: dict[str, Optional[int]]):
-    return "\n  ".join(
-        f"{label if label is not None else 'None':5}: {n:,}"
-        for label, n in Counter(labels.values()).most_common()
-    )
-
-
 @modeling.command(name="status")
 @click.argument(
     "hdf5",
@@ -99,36 +95,21 @@ def modeling_status(obj, hdf5):
     HDF5 is the path to the hdf5 file containing blocklot images.
     """
     db, models_path = obj["db"], obj["models_path"]
-    blocklots = fetch_all_blocklots(db, db.CLEAN_SCHEMA)
-    labels = fetch_labels(db)
-    click.echo("Modeling Status\n" + "=" * 50 + "\n")
-    click.echo(
-        f"GPU acceleration is{ 'NOT' if not is_gpu_available() else ''} available.\n"
-    )
-    click.echo(f"The database contains {len(blocklots):,} relevant blocklots.\n")
-    label_str = build_label_str(labels)
-    click.echo(
-        f"The database contains the following ground-truth labels:\n  {label_str}\n"
-    )
-    bl_with_image_and_label = blocklots_with_image_and_label(db, hdf5)
-    click.echo(
-        f"There are {len(bl_with_image_and_label):,} blocklots with both "
-        "images and labels."
-    )
-    label_str = build_label_str(bl_with_image_and_label)
-    click.echo(f"They have these ground-truth labels:\n  {label_str}\n")
-    blocklots = random.sample(sorted(bl_with_image_and_label), k=3)
-    click.echo(f"    Here are a few: {blocklots}")
-    image_model_exists = Path(models_path / "image_model.pkl").is_file()
-    click.echo(
-        f"The image model does{' NOT' if not image_model_exists else ''} exist "
-        f"in {models_path}."
-    )
-    model_exists = Path(models_path / "model.pkl").is_file()
-    click.echo(
-        f"The overall model does{' NOT' if not model_exists else ''} exist "
-        f"in {models_path}."
-    )
+    click.echo(get_modeling_status(db, models_path, hdf5))
+
+
+@modeling.command(name="train-image-model")
+@click.argument(
+    "hdf5",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+)
+@click.pass_obj
+def cli_train_image_model(obj, hdf5):
+    """Train an image classification model from aerial photos
+
+    HDF5 is the path to the hdf5 file containing blocklot images.
+    """
+    train_image_model(obj["db"], obj["models_path"], hdf5)
 
 
 @modeling.command()
@@ -136,38 +117,12 @@ def modeling_status(obj, hdf5):
     "hdf5",
     type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
 )
-@click.pass_obj
-def train_image_model(obj, hdf5):
-    """Train an image classification model from aerial photos
-
-    HDF5 is the path to the hdf5 file containing blocklot images.
-    """
-    db, models_path = obj["db"], obj["models_path"]
-    model = ImageModel(
-        hdf5,
-        batch_size=128,
-        learning_rate=1e-4,
-        angle_variations=[0, 20, 45, 60, 90],
-        num_epochs=5,
-        unfreeze=1,
-        dropout=0.9,
-    )
-    blocklots = blocklots_with_image_and_label(db, hdf5)
-    X, y = list(blocklots.keys()), list(blocklots.values())
-    model.fit(X, y)
-    with open(models_path / "image_model.pkl", "wb") as f:
-        pickle.dump(model.to_save(), f, protocol=5)
-    with h5py.File(hdf5) as f:
-        blocklots = blocklots_in_hdf5(f)
-    gc.collect()
-    preds = model.forward(blocklots)
-    write_completed_preds_to_db(db, "image_model", preds)
-
-
-@modeling.command()
-@click.argument(
-    "hdf5",
-    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+@click.option(
+    "--model-path",
+    "-m",
+    help="directory to save models into",
+    default=Path(__file__).resolve().parent / "models",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
 )
 @click.option(
     "--max-date",
@@ -177,15 +132,91 @@ def train_image_model(obj, hdf5):
     type=click.DateTime(),
 )
 @click.pass_obj
-def train(obj, hdf5, max_date):
+def train(obj, model_path, hdf5, max_date):
     """Train a new model to classify roof damage severity
 
     HDF5 is the path to the hdf5 file containing blocklot images.
     """
     blocklots = blocklots_with_image_and_label(obj["db"], hdf5)
     X_creator = MatrixCreator(obj["db"], hdf5)
-    X = X_creator.build_features(blocklots, max_date)
-    print(X)
+    X = X_creator.build_features(list(blocklots.keys()), max_date)
+    y = blocklots
+    X, y = flatten_X_y(X, y)
+    train_X, test_X, train_y, test_y = train_test_split(
+        X, y, test_size=0.3, stratify=y, random_state=SEED
+    )
+    trainer = Trainer(model_path)
+    scores = trainer.train(train_X, train_y)
+    pprint(scores)
+    graph_model_scores(scores)
+    best_model = pull_out_best(scores)
+    print(best_model)
+    model, details = load_model(best_model)
+    preds = model.predict_proba(test_X)
+    print(preds)
+
+
+# TODO Move this somewhere nice
+def pull_out_best(scores):
+    return sorted(scores, key=lambda k: np.mean(scores[k]["test_f1"]), reverse=True)[0]
+
+
+def graph_model_scores(scores):
+    # Initialize lists to store summary statistics
+    f1_means, f1_stds = [], []
+    precision_means, precision_stds = [], []
+    recall_means, recall_stds = [], []
+    fit_time_means, fit_time_stds = [], []
+    score_time_means, score_time_stds = [], []
+
+    # Iterate over models and calculate summary statistics
+    for path, metrics in scores.items():
+        f1_means.append(np.mean(metrics["test_f1"]))
+        f1_stds.append(np.std(metrics["test_f1"]))
+
+        precision_means.append(np.mean(metrics["test_precision"]))
+        precision_stds.append(np.std(metrics["test_precision"]))
+
+        recall_means.append(np.mean(metrics["test_recall"]))
+        recall_stds.append(np.std(metrics["test_recall"]))
+
+        fit_time_means.append(np.mean(metrics["fit_time"]))
+        fit_time_stds.append(np.std(metrics["fit_time"]))
+
+        score_time_means.append(np.mean(metrics["score_time"]))
+        score_time_stds.append(np.std(metrics["score_time"]))
+
+    # Plotting
+    fig, axs = plt.subplots(5, 1, figsize=(10, 20))  # 5 rows for 5 metrics
+
+    # F1 Score Plot
+    axs[0].errorbar(range(len(scores)), f1_means, yerr=f1_stds, fmt="o")
+    axs[0].set_title("F1 Score of Models")
+    axs[0].set_ylabel("F1 Score")
+
+    # Precision Plot
+    axs[1].errorbar(range(len(scores)), precision_means, yerr=precision_stds, fmt="o")
+    axs[1].set_title("Precision of Models")
+    axs[1].set_ylabel("Precision")
+
+    # Recall Plot
+    axs[2].errorbar(range(len(scores)), recall_means, yerr=recall_stds, fmt="o")
+    axs[2].set_title("Recall of Models")
+    axs[2].set_ylabel("Recall")
+
+    # Fit Time Plot
+    axs[3].errorbar(range(len(scores)), fit_time_means, yerr=fit_time_stds, fmt="o")
+    axs[3].set_title("Fit Time of Models")
+    axs[3].set_ylabel("Fit Time (s)")
+
+    # Score Time Plot
+    axs[4].errorbar(range(len(scores)), score_time_means, yerr=score_time_stds, fmt="o")
+    axs[4].set_title("Score Time of Models")
+    axs[4].set_ylabel("Score Time (s)")
+    axs[4].set_xlabel("Model Index")
+
+    plt.tight_layout()
+    fig.savefig("model_performance_plot_4.png", dpi=300)
 
 
 @roofs.group()
@@ -207,14 +238,14 @@ def images(ctx):
 @click.option("--blocklots", "-b", type=str, multiple=True, default=[])
 @click.option("--overwrite/--no-overwrite", default=False)
 @click.pass_obj
-def crop_to_blocklots(obj, image_root, output, blocklots, overwrite):
+def crop(obj, image_root, output, blocklots, overwrite):
     """Crop aerial image tiles into individual blocklot images
 
     IMAGE_ROOT is the path of the directory containing all the .tif images
-        and their accompanying .tif.aux.xml files.
+    and their accompanying .tif.aux.xml files.
 
     OUTPUT is the path of the hdf5 file that will be created containing
-        the blocklot images.
+    the blocklot images.
     """
     db = obj["db"]
     cropper = ImageCropper(db, image_root)
@@ -242,7 +273,7 @@ def images_status(obj, hdf5):
     with h5py.File(hdf5) as f:
         n_datasets = count_datasets_in_hdf5(f)
         click.echo(f"\nThere are {n_datasets:,} blocklot images in the image database.")
-        blocklots = random.sample(blocklots_in_hdf5(f), k=3)
+        blocklots = random.sample(fetch_blocklots_in_hdf5(f), k=3)
         click.echo(f"    Here are a few: {blocklots}")
 
 
@@ -288,7 +319,7 @@ def import_sheet(
     db = obj["db"]
     importers = []
     if inspection_notes:
-        importers.append(InspectionNodesImporter.from_file(db, inspection_notes))
+        importers.append(InspectionNotesImporter.from_file(db, inspection_notes))
     manager = ImportManager(db, importers)
     manager.setup()
     click.echo(manager.status())
