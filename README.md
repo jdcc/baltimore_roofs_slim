@@ -30,6 +30,15 @@ For GPU acceleration of model training and inference, you need a GPU. If you've 
 TODO. Look at `docker-compose.yaml` and the `Dockerfile` for now.
 
 ## Running
+In the root of the project, create a `.env` file with the following keys:
+```
+PGUSER=user
+PGPASSWORD=password
+PGHOST=db
+PGPORT=5432
+PGDATABASE=roofs
+```
+
 The main mode of interacting with this project is through a series of command-line interface commands. The full list of commands is:
 ```
 roofs --help                      Shows help documentation. Works for all subcommands
