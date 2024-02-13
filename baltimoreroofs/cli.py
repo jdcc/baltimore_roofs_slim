@@ -27,9 +27,9 @@ from .data import (
     count_datasets_in_hdf5,
     fetch_all_blocklots,
     fetch_image_from_hdf5,
+    fetch_blocklots_imaged,
 )
 from .modeling import get_modeling_status, train_image_model
-from .modeling.image_model import ImageModel
 from .modeling.models import (
     load_model,
 )
@@ -273,7 +273,7 @@ def images_status(obj, hdf5):
     with h5py.File(hdf5) as f:
         n_datasets = count_datasets_in_hdf5(f)
         click.echo(f"\nThere are {n_datasets:,} blocklot images in the image database.")
-        blocklots = random.sample(fetch_blocklots_in_hdf5(f), k=3)
+        blocklots = random.sample(fetch_blocklots_imaged(f), k=3)
         click.echo(f"    Here are a few: {blocklots}")
 
 

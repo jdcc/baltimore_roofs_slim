@@ -264,7 +264,7 @@ class ImageModel:
 
 
 def get_dataloader(X, y, hdf5, batch_size, angle_variations=[0], shuffle=False):
-    dataset = InMemoryBlocklotDataset(
+    dataset = BlocklotDataset(
         X,
         transform=ImageStandardizer(output_dims=(224, 224)),
         angle_variation=angle_variations,
@@ -322,7 +322,7 @@ class BlocklotDataset(torch.utils.data.Dataset):
         return len(self.blocklot_ids)
 
     def __getitem__(self, index):
-        self.get_image(index)
+        return self.get_image(index)
 
     def get_image(self, index):
         blocklot_id = self.blocklot_ids[index]
