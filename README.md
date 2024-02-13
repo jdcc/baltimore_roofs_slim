@@ -27,7 +27,7 @@ For GPU acceleration of model training and inference, you need a GPU. If you've 
 
 ### Bare metal
 
-TODO. Look at `docker-compose.yaml` and the `Dockerfile` for now.
+There are two main files with adjustable parameters for this project: `docker-compose.yaml` and the `Dockerfile`. While they can be edited, it is strongly advised to keep the file as it is. The `Dockerfile` contains instructions to run the commands necessary for our docker to work. The `docker-compose.yaml` sets the parameters such as the path for the volumes and the access credentials of the database.
 
 ## Running
 In the root of the project, create a `.env` file with the following keys:
@@ -38,6 +38,8 @@ PGHOST=db
 PGPORT=5432
 PGDATABASE=roofs
 ```
+
+The user and password, if necessary, can be altered on the `docker-compose.yaml` file. It should match the values in `.env`.
 
 The main mode of interacting with this project is through a series of command-line interface commands. The full list of commands is:
 ```
