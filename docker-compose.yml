@@ -13,10 +13,12 @@ services:
 
   roofs:
     build: .
+    shm_size: '16gb'
     depends_on:
       - db
     volumes:
       - .:/usr/src/app
+      - /mnt/raid/projects/baltimore/images:/usr/src/app/data/aerial_images
     deploy:
       resources:
         reservations:

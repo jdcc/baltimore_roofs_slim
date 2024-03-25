@@ -52,10 +52,14 @@ roofs images crop                 Crop aerial image tiles into individual blockl
 roofs images dump                 Dump JPEG images of blocklots to disk for further...
 roofs images status               Show the status of the blocklot image setup process
 
-roofs modeling predict            Output roof damage predictions
-roofs modeling status             Status of the modeling pipeline
-roofs modeling train              Train a new model to classify roof damage severity
-roofs modeling train-image-model  Train an image classification model from aerial photos
+roofs train status                Status of the training pipeline
+roofs train image-model           Train an image classification model from aerial photos
+roofs train model                 Train a new model to classify roof damage severity
+
+roofs report predictions          Generate roof damage scores from a given model
+roofs report evals                Evaluate the performance of a given model
+
+roofs misc merge-sheets           Merge a number of CSVs or Excel files on blocklot
 ```
 
 A full run of the project from data loading to model training to prediction looks similar to this series of commands. Use the `--help` argument to each of these commands for a full understanding of what's going on and the `status` command of each subcommand to check that everything is proceeding normally.
@@ -75,10 +79,13 @@ $ roofs db import-gdb data/roofdata_2024.gdb \
 $ roofs db status
 $ roofs images crop data/images data/images.hdf5
 $ roofs images status data/images.hdf5
-$ roofs modeling status data/images.hdf5
-$ roofs modeling train-image-model data/images.hdf5
+$ roofs train status data/images.hdf5
+$ roofs train image-model data/images.hdf5
+$ roofs train model data/images.hdf5 models.csv 
+$ roofs report evals models/6c87d283-bfee-4075-bd72-a0d4355d356a.pkl 6c87_eval.csv data/images.hdf5
+$ roofs report predictions models/6c87d283-bfee-4075-bd72-a0d4355d356a.pkl 6c87_preds.csv data/images.hdf5
+$ roofs misc merge-sheets merged.csv 6c87_preds.csv 2022_data.xlsx
 ```
 
 ## Open Questions
-* USEGROUP R vs. USEGROUP E? Dropping blocklots like 4544D030 and 4577B002
 * License?

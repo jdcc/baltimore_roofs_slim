@@ -7,6 +7,7 @@ from pathlib import Path
 
 import h5py
 from joblib import dump
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold, cross_validate
 from tqdm.auto import tqdm
@@ -22,11 +23,11 @@ class Trainer:
     def __init__(self, model_dir):
         self.model_dir = model_dir
         self.param_values = {
-            "n_estimators": [10, 100, 500],  # 1000
+            "n_estimators": [10, 100, 500, 1000],
             "criterion": ["gini", "entropy", "log_loss"],
-            "max_depth": [None, 10, 20, 30, 50],
-            "class_weight": [None, "balanced"],
-            "max_features": [None],  # sqrt
+            "max_depth": [10, 20, 30, 50, None],
+            "class_weight": ["balanced", None],
+            "max_features": ["sqrt", None],
         }
         self.param_space = calc_param_space(self.param_values)
 
@@ -34,12 +35,12 @@ class Trainer:
     def train(self, X, y):
         """This actually trains a bunch of models"""
         model_scores = {}
+        model_params = {}
         cv_splitter = StratifiedKFold(5, shuffle=True, random_state=SEED)
         for params in tqdm(self.param_space, desc="Training models", smoothing=0):
             model = RandomForestClassifier(**params, n_jobs=-1, random_state=SEED)
             model.fit(X, y)
             model_path = self.save_model(model, params)
-            # Uses stratified k-fold by default
             model_scores[model_path] = cross_validate(
                 model,
                 X,
@@ -48,7 +49,8 @@ class Trainer:
                 n_jobs=-1,
                 scoring=("precision", "recall", "f1"),
             )
-        return model_scores
+            model_params[model_path] = params
+        return model_scores, model_params
 
     def save_model(self, model, params):
         model_id = str(uuid.uuid4())
@@ -68,62 +70,24 @@ class Trainer:
 
 # TODO organize
 
-EvalCounts = namedtuple(
-    "EvalCounts",
-    ("n", "n_labeled", "n_labeled_pos", "n_labeled_neg", "precision", "recall"),
-)
 
-
-def pull_eval_counts(df, n_total_positive):
-    label_counts = df.label.value_counts()
-    precision = None
-    recall = None
-    if label_counts.sum() > 0:
-        precision = label_counts.get(1.0, default=0) / label_counts.sum()
-    if n_total_positive > 0:
-        recall = label_counts.get(1.0, default=0) / n_total_positive
-    return EvalCounts(
-        n=int(df.shape[0]),
-        n_labeled=int(label_counts.sum()),
-        n_labeled_pos=int(label_counts.get(1.0, default=0)),
-        n_labeled_neg=int(label_counts.get(0.0, default=0)),
-        precision=precision,
-        recall=recall,
+def build_score_df(labels: dict[str, int], preds: dict[str, float]) -> pd.DataFrame:
+    return pd.DataFrame.from_dict(
+        {b: {"label": labels.get(b, None), "score": preds[b]} for b in preds},
+        orient="index",
     )
 
 
-def build_evaluation(df, thresholds=None, ks=None):
-    df = df[~df.score.isna()].copy()
-    n_total_positive = df.label.sum()
-    df["threshold"] = df.score.rank(ascending=False, pct=True)
-    threshold_counts = {}
-    for threshold in thresholds:
-        to_eval = df[df.threshold < threshold]
-        threshold_counts[threshold] = pull_eval_counts(to_eval, n_total_positive)
-
-    top_k_counts = {}
-    for k in ks:
-        top_k = df.sort_values("score", ascending=False).head(k)
-        top_k_counts[k] = pull_eval_counts(top_k, n_total_positive)
-
-    return threshold_counts, top_k_counts
-
-
-def build_score_df(preds):
-    blocklots = list(preds.keys())
-    labels = Labeler.load_labels(blocklots)
-    return pd.DataFrame({"label": {b: l for b, l in labels.items()}, "score": preds})
-
-
-def train_image_model(db: Database, models_path: Path, hdf5: Path):
+def train_image_model(db: Database, models_path: Path, hdf5: Path, seed: int):
     model = ImageModel(
         hdf5,
-        batch_size=128,
-        learning_rate=1e-4,
-        angle_variations=[0, 20, 45, 60, 90],
-        num_epochs=5,
+        batch_size=512,
+        learning_rate=1e-5,
+        angle_variations=[0, 20, 45, 80],
+        num_epochs=20,
         unfreeze=1,
         dropout=0.9,
+        seed=seed,
     )
     blocklots = fetch_blocklots_imaged_and_labeled(db, hdf5)
     X, y = list(blocklots.keys()), list(blocklots.values())
@@ -145,7 +109,9 @@ def calc_param_space(param_values):
     ]
 
 
-def flatten_X_y(X: dict[str, dict[str, float]], y: dict[str, int]) -> tuple[list, list]:
+def flatten_X_y(
+    X: dict[str, dict[str, float]], y: dict[str, int | None]
+) -> tuple[list[list[float]], list[int | None], list[str]]:
     flat_X, flat_y = [], []
     feature_order = list(X.keys())
     blocklot_order = list(next(iter(X.values())).keys())
@@ -153,4 +119,4 @@ def flatten_X_y(X: dict[str, dict[str, float]], y: dict[str, int]) -> tuple[list
         row = [X[feature][blocklot] for feature in feature_order]
         flat_X.append(row)
         flat_y.append(y.get(blocklot, None))
-    return flat_X, flat_y
+    return flat_X, flat_y, blocklot_order

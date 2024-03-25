@@ -341,7 +341,7 @@ def build_dark_pixels_features(_, blocklots, __, args):
         threshold_models[threshold] = DarkImageBaseline(threshold)
 
     for blocklot in tqdm(blocklots, smoothing=0, desc="Loading images"):
-        image = fetch_image_from_hdf5(blocklot, hdf5_filename=args["hdf5"])
+        image = fetch_image_from_hdf5(blocklot, args["hdf5"])
         for threshold in args["thresholds"]:
             feature_name = f"pct_pixels_darker_than_{threshold}"
             model = threshold_models[threshold]

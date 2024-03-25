@@ -2,19 +2,19 @@ import glob
 import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Union, Optional
+from typing import Optional, Union
 
 import h5py
 import numpy as np
 import pyproj
-from psycopg2 import sql
 import rasterio
 import rasterio.mask
 import rasterio.warp
 import shapely
-from shapely.ops import transform
+from psycopg2 import sql
 from shapely.geometry.multipolygon import MultiPolygon
 from shapely.geometry.polygon import Polygon
+from shapely.ops import transform
 from tqdm.auto import tqdm
 
 from .blocklots import split_blocklot
@@ -83,7 +83,7 @@ class ImageCropper:
 
     def pixels_for_blocklot(
         self, blocklot: str, *to_shape_args, **to_shape_kwargs
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray:
         """Return the pixel values for an aerial image of a blocklot.
 
         Args:
@@ -255,22 +255,40 @@ def reproject_shape(shape, src_crs, dst_crs):
     return transform(project, shape)
 
 
-def fetch_image_from_hdf5(blocklot, f=None, hdf5_filename=None):
-    assert (
-        f is not None or hdf5_filename is not None
-    ), "Must pass either a file handle or a filename"
-    if hdf5_filename:
-        f = h5py.File(hdf5_filename)
+def _get_hdf5_handle(file) -> h5py.File:
+    """Get a file object from either a str or file object"""
+    if isinstance(file, h5py.File):
+        return file
+    return h5py.File(file)
+
+
+def fetch_image_from_hdf5(blocklot, file: h5py.File | str) -> np.array:
+    """Fetch a blocklot image from and HDF5 file"""
+    handle = _get_hdf5_handle(file)
     block, lot = split_blocklot(blocklot)
-    data = f[f"{block}/{lot}"]
+    data = handle[f"{block}/{lot}"]
     arr = np.empty_like(data)
     data.read_direct(arr)
-    if hdf5_filename:
-        f.close()
+    if isinstance(file, str):
+        handle.close()
     return arr
 
 
+def fetch_blocklots_imaged(file: h5py.File | str) -> list[str]:
+    """Fetch all the blocklots with images from HDF5 file"""
+    handle = _get_hdf5_handle(file)
+    blocklots = []
+    for block in handle.keys():
+        for lot in handle[block].keys():
+            blocklots.append(f"{block:5}{lot}")
+    if isinstance(file, str):
+        handle.close()
+    return blocklots
+
+
 def count_datasets_in_hdf5(h5file):
+    """Recursively count the number of datasets in an HDF5 file"""
+
     def is_dataset(name):
         obj = h5file[name]
         if isinstance(obj, h5py.Dataset):
@@ -280,11 +298,3 @@ def count_datasets_in_hdf5(h5file):
     h5file.visit(is_dataset)
 
     return n_datasets[0]
-
-
-def fetch_blocklots_imaged(file: h5py.File):
-    blocklots = []
-    for block in file.keys():
-        for lot in file[block].keys():
-            blocklots.append(f"{block:5}{lot}")
-    return blocklots

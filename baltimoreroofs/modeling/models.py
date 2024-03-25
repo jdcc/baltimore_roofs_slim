@@ -37,6 +37,17 @@ def fetch_labels(db):
     return {row[0]: row[1] for row in results}
 
 
+def fetch_blocklot_label(db, blocklot: str) -> bool:
+    query = sql.SQL(
+        "SELECT blocklot, label FROM {label_table} WHERE blocklot = {blocklot}"
+    ).format(
+        label_table=sql.Identifier(db.CLEAN_SCHEMA, "ground_truth"), blocklot=blocklot
+    )
+    results = db.run_query(query)
+    label = results[0]["label"]
+    return bool(label) if label else None
+
+
 def fetch_blocklots_imaged_and_labeled(db, hdf5_path) -> dict[str, int]:
     labels = fetch_labels(db)
     with h5py.File(hdf5_path) as f:

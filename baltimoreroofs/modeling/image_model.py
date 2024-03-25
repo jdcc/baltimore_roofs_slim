@@ -42,6 +42,7 @@ class ImageModel:
         optimizer=None,
         unfreeze=0,
         dropout=0.0,
+        seed=SEED,
     ):
         self.hdf5 = hdf5
         self.batch_size = batch_size
@@ -55,6 +56,8 @@ class ImageModel:
         self.optimizer = optimizer
         self.unfreeze = unfreeze
         self.dropout = dropout
+        self.seed = seed
+        set_seed(self.seed)
 
         random_prefix = "".join(random.sample(string.ascii_letters, 4))
         now = time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -116,7 +119,7 @@ class ImageModel:
 
     def get_dataloaders(self, X, y):
         train_X, test_X, train_y, test_y = train_test_split(
-            X, y, test_size=0.2, random_state=SEED
+            X, y, test_size=0.2, random_state=self.seed
         )
 
         train_dataloader = get_dataloader(
@@ -170,7 +173,9 @@ class ImageModel:
 
         dataloaders = self.get_dataloaders(X, y)
 
-        for epoch in tqdm(range(self.num_epochs), desc="Epoch", leave=False):
+        for epoch in tqdm(
+            range(self.num_epochs), desc="Epoch", leave=False, smoothing=0
+        ):
             for phase in tqdm(["train", "val"], desc="Phase", leave=False):
                 if phase == "train":
                     self.model.train()
@@ -180,7 +185,7 @@ class ImageModel:
                 batch_losses = []
 
                 for inputs, labels in tqdm(
-                    dataloaders[phase], desc="Batch", leave=False
+                    dataloaders[phase], desc="Batch", leave=False, smoothing=0
                 ):
                     inputs = inputs.to(self.device)
                     labels = labels.to(self.device)
@@ -263,7 +268,9 @@ class ImageModel:
         return self.forward(X)
 
 
-def get_dataloader(X, y, hdf5, batch_size, angle_variations=[0], shuffle=False):
+def get_dataloader(
+    X, y, hdf5, batch_size, angle_variations=[0], shuffle=False, seed=SEED
+):
     dataset = BlocklotDataset(
         X,
         transform=ImageStandardizer(output_dims=(224, 224)),
@@ -271,7 +278,21 @@ def get_dataloader(X, y, hdf5, batch_size, angle_variations=[0], shuffle=False):
         labels=y,
         hdf5=hdf5,
     )  # TODO: update transform?
-    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    set_seed(seed)
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=5,
+        prefetch_factor=1,
+        pin_memory=True,
+    )
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    random.seed(0)
+    np.random.seed(0)
 
 
 def set_model(device, pretrained, unfreeze=0, dropout=0.0):

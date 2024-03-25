@@ -8,6 +8,7 @@ from .models import (
     DarkImageBaseline,
     fetch_blocklots_imaged_and_labeled,
     fetch_labels,
+    fetch_blocklot_label,
     is_gpu_available,
 )
 from .training import train_image_model
