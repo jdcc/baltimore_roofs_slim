@@ -660,6 +660,25 @@ def reset(obj):
     click.echo("The database has been reset.")
 
 
+@db.command()
+@click.option(
+    "--label-date",
+    "-d",
+    help="The date aerial images were last labeled",
+    default="2018-08-01",
+    type=click.DateTime(),
+)
+@click.pass_obj
+def assemble_ground_truth(obj, label_date):
+    """Put together the ground truth to train against
+
+    The label date option makes sure that blocklots that have
+    seen a demolition after damage was labeled doesn't make it
+    into the dataset."""
+    db = obj["db"]
+    GeodatabaseImporter(db).filter_to_cohort(label_date)
+
+
 @roofs.group()
 def misc():
     """Miscellaneous helpful widgets"""

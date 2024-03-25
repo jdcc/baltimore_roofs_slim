@@ -338,7 +338,7 @@ class GeodatabaseImporter(DataSetImporter):
         self._db.run(
             sql.SQL(
                 "ALTER TABLE {table} ADD COLUMN created_date "
-                "timestamp with time zone DEFAULT '2018-06-01 12:00:00 EDT'"
+                "timestamp with time zone DEFAULT '2018-08-01 12:00:00 EDT'"
             ).format(table=dest)
         )
         self._add_blocklot_index("ground_truth")
@@ -401,7 +401,6 @@ class GeodatabaseImporter(DataSetImporter):
             dest=dest,
         )
         self._db.run(query)
-        self._filter_to_cohort()
         self._db.run(
             sql.SQL(
                 "ALTER TABLE {table} ADD COLUMN created_date "
@@ -421,8 +420,9 @@ class GeodatabaseImporter(DataSetImporter):
             ).format(dest=dest)
         )
 
-    def _filter_to_cohort(self):
+    def filter_to_cohort(self, label_date):
         # Blocklots that have buildings on them and are zoned as residential
+        # and did not have a demolition after interns labeled damage
         query = sql.SQL(
             """
             WITH blocklots AS (
@@ -431,8 +431,11 @@ class GeodatabaseImporter(DataSetImporter):
                 FROM {tpa_table} AS tpa
                 INNER JOIN {buildings_table} AS b
                     ON ST_Intersects(b.shape, tpa.shape)
+                LEFT JOIN {demo_table} AS demo
+                    ON tpa.blocklot = demo.blocklot
                 WHERE trim(zonecode) IN ('R-6', 'R-7', 'R-8', 'R-9', 'R-10')
                     AND trim(usegroup) IN ('E', 'R')
+                    AND (date_demo_finish IS NULL OR date_demo_finish < %s)
             )
             DELETE FROM {tpa_table} AS tpa
             WHERE tpa.blocklot NOT IN (SELECT blocklot FROM blocklots);
@@ -440,8 +443,9 @@ class GeodatabaseImporter(DataSetImporter):
         ).format(
             tpa_table=self._db.TPA,
             buildings_table=sql.Identifier(CLEAN_SCHEMA, "building_outlines"),
+            demo_table=sql.Identifier(CLEAN_SCHEMA, "demolitions"),
         )
-        self._db.run(query)
+        self._db.run(query, (label_date,))
 
     def _clean_vacant_building_notices(self):
         self._clean_with_select(
