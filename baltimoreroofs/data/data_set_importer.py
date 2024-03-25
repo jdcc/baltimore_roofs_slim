@@ -1,5 +1,6 @@
 import logging
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,9 +17,16 @@ CLEAN_SCHEMA = Database.CLEAN_SCHEMA
 
 
 class DataSetImporter:
-    def __init__(self, desc: str, db: Database, table: Optional[str] = None):
+    def __init__(
+        self,
+        desc: str,
+        db: Database,
+        date_field: str | None = None,
+        table: str | None = None,
+    ):
         self.data_desc: str = desc
         self._db: Database = db
+        self.date_field: str | None = date_field
         self.table_name: Optional[str] = table
         self._src_filename: Optional[Path] = None
 
@@ -89,6 +97,20 @@ class DataSetImporter:
     def is_imported(self):
         return self.raw_is_imported() and self.is_cleaned()
 
+    def get_most_recent_data_date(
+        self, table_name=None, date_field=None
+    ) -> dict[str, datetime]:
+        """Get the timestamp of the most recent data"""
+        table_name = table_name or self.table_name
+        date_field = date_field or self.date_field
+        result = self._db.run_query(
+            sql.SQL("SELECT MAX({date_field}) FROM {table}").format(
+                date_field=sql.Identifier(date_field),
+                table=sql.Identifier(CLEAN_SCHEMA, table_name),
+            )
+        )
+        return {table_name: result[0][0]}
+
     def assert_imported(self):
         assert self.raw_is_imported(), "Raw data is missing"
         assert self.is_cleaned(), "Cleaned data is missing"
@@ -96,7 +118,7 @@ class DataSetImporter:
 
 class InspectionNotesImporter(DataSetImporter):
     def __init__(self, db: Database):
-        super().__init__("Inspection notes", db, "inspection_notes")
+        super().__init__("Inspection notes", db, "created_date", "inspection_notes")
 
     @classmethod
     def from_file(cls, db: Database, filename: Path):
@@ -107,7 +129,7 @@ class InspectionNotesImporter(DataSetImporter):
     def clean(self):
         self._clean_with_select(
             """
-            "DateCreate"::timestamp AS created_date,
+            "DateCreate"::timestamp AT TIME ZONE 'America/New_York' AS created_date,
             rpad("Block", 5) || "Lot" AS blocklot,
             lower("Detail") AS lowered_detail"""
         )
@@ -129,6 +151,18 @@ class GeodatabaseImporter(DataSetImporter):
         "ground_truth",
         "vacant_building_notices",
     ]
+    DATE_FIELDS = {
+        "building_outlines": "created_date",
+        "building_permits": "csm_issued_date",
+        "code_violations": "datecreate",
+        "data_311": "created_date",
+        "demolitions": "date_demo_finish",
+        "real_estate": "deed_date",
+        "redlining": "created_date",
+        "tax_parcel_address": "created_date",
+        "ground_truth": "created_date",
+        "vacant_building_notices": "created_date",
+    }
 
     def __init__(self, db: Database):
         super().__init__("Geodatabase layers", db)
@@ -183,8 +217,22 @@ class GeodatabaseImporter(DataSetImporter):
                 shell=True,
             )
 
+    def get_most_recent_data_date(
+        self, table_name=None, date_field=None
+    ) -> dict[str, datetime]:
+        dates = {}
+        for table, field in self.DATE_FIELDS.items():
+            dates.update(super().get_most_recent_data_date(table, field))
+        return dates
+
     def _clean_building_outlines(self):
         super().clean("building_outlines")
+        self._db.run(
+            sql.SQL(
+                "ALTER TABLE {table} ADD COLUMN created_date "
+                "timestamp with time zone DEFAULT '2010-01-01 12:00:00 EST'"
+            ).format(table=sql.Identifier(CLEAN_SCHEMA, "building_outlines"))
+        )
         self._db.run(
             sql.SQL(
                 "CREATE INDEX building_outlines_shape_idx ON {dest} USING gist (shape)"
@@ -287,6 +335,12 @@ class GeodatabaseImporter(DataSetImporter):
         """
         ).format(tpa_table=self._db.TPA, src=src, dest=dest)
         self._db.run(query)
+        self._db.run(
+            sql.SQL(
+                "ALTER TABLE {table} ADD COLUMN created_date "
+                "timestamp with time zone DEFAULT '2018-06-01 12:00:00 EDT'"
+            ).format(table=dest)
+        )
         self._add_blocklot_index("ground_truth")
 
     def _clean_real_estate(self):
@@ -298,6 +352,12 @@ class GeodatabaseImporter(DataSetImporter):
 
     def _clean_redlining(self):
         super().clean("redlining")
+        self._db.run(
+            sql.SQL(
+                "ALTER TABLE {table} ADD COLUMN created_date "
+                "timestamp with time zone DEFAULT '1935-01-01 12:00:00 EST'"
+            ).format(table=sql.Identifier(CLEAN_SCHEMA, "redlining"))
+        )
 
     def _clean_tax_parcel_address(self):
         assert self._db.table_exists(
@@ -342,6 +402,12 @@ class GeodatabaseImporter(DataSetImporter):
         )
         self._db.run(query)
         self._filter_to_cohort()
+        self._db.run(
+            sql.SQL(
+                "ALTER TABLE {table} ADD COLUMN created_date "
+                "timestamp with time zone DEFAULT '2024-01-08 12:00:00 EST'"
+            ).format(table=sql.Identifier(CLEAN_SCHEMA, "tax_parcel_address"))
+        )
         self._db.run(
             sql.SQL(
                 "CREATE INDEX tax_parcel_address_shape_idx ON {dest} USING gist (shape)"

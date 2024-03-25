@@ -1,4 +1,4 @@
-from psycopg2 import sql
+from psycopg2 import sql, errors
 
 from .data_set_importer import (
     DataSetImporter,
@@ -42,7 +42,8 @@ class ImportManager:
             importer.assert_imported()
 
     def status(self):
-        output = "Import Status\n" + "=" * 50 + "\n"
+        WIDTH = 67
+        output = "Import Status\n" + "=" * WIDTH + "\n"
         for importer in self.all_importers:
             output += f"{importer.data_desc:40}: {importer.is_imported()}\n"
 
@@ -52,5 +53,13 @@ class ImportManager:
                 importer.assert_imported()
             except AssertionError as e:
                 output += f"{importer.data_desc}: {e}\n"
+
+        output += "\nMost Recent Data\n" + "=" * WIDTH + "\n"
+        for importer in self.all_importers:
+            try:
+                for table, date in importer.get_most_recent_data_date().items():
+                    output += f"{table:40}: {date}\n"
+            except errors.UndefinedTable:
+                continue
 
         return output
