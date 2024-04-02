@@ -79,8 +79,9 @@ $ roofs db import-gdb data/roofdata_2024.gdb \
   --vacant-building-notices=open_notice_vacant
 $ roofs db filter
 $ roofs db status
-$ roofs images crop data/images data/images.hdf5
+$ roofs images crop data/aerial_images data/images.hdf5
 $ roofs images status data/images.hdf5
+$ roofs images dump data/images.hdf5 . -b "1152 011"
 $ roofs train status data/images.hdf5
 $ roofs train image-model data/images.hdf5
 $ roofs train model data/images.hdf5 models.csv 

@@ -133,7 +133,11 @@ def model(obj, hdf5, output, model_path, max_date):
     In addition to the CSV, a PNG of the same name will be written
     that graphs the scores.
     """
-    train_many_models(db, model_path, hdf5, max_date)
+    df, fig = train_many_models(obj["db"], model_path, hdf5, max_date)
+    graph_filename = output.with_suffix(".png")
+    fig.savefig(graph_filename, dpi=300)
+    df.to_csv(output)
+    click.echo(f"Wrote scores to {output} and graph to {graph_filename}")
 
 
 @roofs.group()

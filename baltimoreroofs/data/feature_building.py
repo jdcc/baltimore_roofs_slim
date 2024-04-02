@@ -72,7 +72,7 @@ def build_311_radius(db, blocklots, max_date, radius):
         LEFT JOIN {table} AS d
             ON ST_DWithin(d.shape, tp.shape, %s)
             AND d.longitude IS NOT null
-            AND created_date <= %s
+            AND d.created_date <= %s
         WHERE blocklot IN %s
         GROUP BY blocklot
     """
@@ -113,7 +113,7 @@ def build_311_type_features(db, blocklots, max_date, radii):
                 LEFT JOIN {table} AS d
                     ON ST_DWithin(d.shape, tp.shape, %s)
                     AND d.longitude IS NOT NULL
-                    AND created_date <= %s
+                    AND d.created_date <= %s
                     AND sr_type = %s
                 WHERE blocklot IN %s
                 GROUP BY blocklot
@@ -239,10 +239,10 @@ def build_vacant_building_notices_features(db, blocklots, max_date, args):
         SELECT
             tpa.blocklot,
             EXTRACT(
-                EPOCH FROM (%s - COALESCE(min(created_date), %s)))
+                EPOCH FROM (%s - COALESCE(min(vbn.created_date), %s)))
                 AS secs_since_first_created_date,
             EXTRACT(
-                EPOCH FROM (%s - COALESCE(max(created_date), %s)))
+                EPOCH FROM (%s - COALESCE(max(vbn.created_date), %s)))
                 AS secs_since_last_created_date,
             COUNT(distinct vbn.noticenum) AS n_vbns
         FROM {tpa} tpa
