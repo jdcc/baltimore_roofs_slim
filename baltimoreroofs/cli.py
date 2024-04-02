@@ -1,21 +1,14 @@
-import base64
 import logging
-import io
 import random
-from pathlib import Path
-from pprint import pprint
 import string
-from typing import Optional, Iterable
+from pathlib import Path
 
 import click
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
-from dotenv import load_dotenv
 import pandas as pd
+from dotenv import load_dotenv
 from PIL import Image
-from sklearn.model_selection import train_test_split
-from tqdm.auto import tqdm
 
 from .data import (
     Creds,
@@ -29,15 +22,11 @@ from .data import (
     fetch_all_blocklots,
     fetch_blocklots_imaged,
     fetch_image_from_hdf5,
+    flatten_X_y,
 )
-from .modeling import get_modeling_status, train_image_model
-from .modeling.models import (
-    fetch_blocklots_imaged_and_labeled,
-    load_model,
-    fetch_labels,
-)
-from .modeling.training import Trainer, build_score_df, flatten_X_y
-from .reporting import build_evaluation, Reporter
+from .modeling import get_modeling_status, train_image_model, train_many_models
+from .modeling.models import load_model
+from .reporting import Reporter, evaluate
 
 load_dotenv()
 
@@ -48,7 +37,6 @@ this_dir = Path(__file__).resolve().parent
 SEED = 0
 
 
-# db group
 @click.group()
 @click.option("--user", envvar="PGUSER")
 @click.option("--password", envvar="PGPASSWORD")
@@ -145,34 +133,7 @@ def model(obj, hdf5, output, model_path, max_date):
     In addition to the CSV, a PNG of the same name will be written
     that graphs the scores.
     """
-    blocklot_labels = fetch_blocklots_imaged_and_labeled(obj["db"], hdf5)
-    print(f"Fetched {len(blocklot_labels):,} labeled blocklots")
-    blocklots, labels = list(blocklot_labels.keys()), list(blocklot_labels.values())
-    train, test = train_test_split(
-        blocklots, test_size=0.3, stratify=labels, random_state=SEED
-    )
-    train_X, train_y, _ = build_dataset(
-        obj["db"], hdf5, train, blocklot_labels, max_date
-    )
-    print(f"Training with {len(train):,} examples, {sum(train_y):,} with damage")
-    trainer = Trainer(model_path)
-    scores, params = trainer.train(train_X, train_y)
-    mean_scores = {
-        model: ({name: sum(numbers) / len(numbers) for name, numbers in metric.items()})
-        for model, metric in scores.items()
-    }
-    score_df = pd.DataFrame.from_dict(mean_scores, orient="index")
-    df = score_df.join(pd.DataFrame.from_dict(params, orient="index"))
-    graph_filename = output.with_suffix(".png")
-    graph_model_scores(scores, graph_filename)
-    df.to_csv(output)
-    print(f"Wrote scores to {output} and graph to {graph_filename}")
-
-
-def build_dataset(db, hdf5, blocklots, labels: dict[str, int], max_date):
-    X_creator = MatrixCreator(db, hdf5)
-    features = X_creator.build_features(blocklots, max_date)
-    return flatten_X_y(features, {b: labels.get(b, None) for b in blocklots})
+    train_many_models(db, model_path, hdf5, max_date)
 
 
 @roofs.group()
@@ -229,7 +190,7 @@ def predictions(obj, model_path, output, hdf5, blocklots, max_date):
     preds = model.predict_proba(X)
     df = pd.DataFrame(preds, index=blocklots, columns=["not_damaged", "damaged"])
     df.index.name = "blocklot"
-    reporter = Reporter(obj["db"], hdf5)
+    reporter = Reporter(obj["db"])
     df["codemap"] = pd.Series(reporter.codemap_urls(df.index))
     df["codemap_ext"] = pd.Series(reporter.codemap_ext_urls(df.index))
     df["pictometry"] = pd.Series(reporter.pictometry_urls(df.index))
@@ -285,44 +246,13 @@ def evals(obj, model_path, output, hdf5, max_date, top_k, eval_test_only):
     the training set. This means that if the model overfit to the training data,
     the performance will look better than you'll be able to expect on new data.
     """
-    blocklot_labels = fetch_blocklots_imaged_and_labeled(obj["db"], hdf5)
-    logger.info("Building dataset")
-    if eval_test_only:
-        blocklots, labels = list(blocklot_labels.keys()), list(blocklot_labels.values())
-        _, test = train_test_split(
-            blocklots, test_size=0.3, stratify=labels, random_state=SEED
-        )
-        X, _, blocklots = build_dataset(
-            obj["db"], hdf5, test, blocklot_labels, max_date
-        )
-    else:
-        blocklots = fetch_blocklots_imaged(hdf5)
-        X, _, blocklots = build_dataset(
-            obj["db"], hdf5, blocklots, blocklot_labels, max_date
-        )
-    logger.info(f"Evaluating model on {len(blocklots):,} blocklots")
-    model, _ = load_model(model_path)
-    preds = dict(zip(blocklots, model.predict_proba(X)[:, 1]))
-    df = build_score_df(blocklot_labels, preds)
-    thresholds = np.linspace(0.0, 1.0, 50)
-    threshold_eval, top_k_eval = build_evaluation(df, thresholds, top_k)
-    eval = pd.concat(
-        [
-            pd.DataFrame.from_dict(top_k_eval, orient="index"),
-            pd.DataFrame.from_dict(threshold_eval, orient="index"),
-        ]
+    df, fig = evaluate(
+        obj["db"], model_path, output, hdf5, max_date, top_k, eval_test_only
     )
-    eval.index.name = "cut"
-    eval.to_csv(output, index_label="cut")
-    print(f"Wrote evaluation details to {output}")
-
-
-def numpy_to_base64(arr):
-    img = Image.fromarray(arr)
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    b64_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    return b64_string
+    graph_filename = output.with_suffix(".png")
+    fig.savefig(graph_filename, dpi=300)
+    df.to_csv(output)
+    click.echo(f"Wrote scores to {output} and graph to {graph_filename}")
 
 
 @report.command()
@@ -338,6 +268,7 @@ def numpy_to_base64(arr):
         exists=True, file_okay=False, dir_okay=True, readable=True, path_type=Path
     ),
 )
+@click.argument("output", type=click.File(mode="w", encoding="utf-8"))
 @click.option(
     "--top-n",
     type=int,
@@ -345,155 +276,14 @@ def numpy_to_base64(arr):
     default=100,
 )
 @click.pass_obj
-def html(obj, preds, image_root, top_n):
+def html(obj, preds, image_root, output, top_n):
     """Generate an HTML report of predictions
 
     PREDS is the predictions CSV that results from `roofs report predictions`
     IMAGE_ROOT is the root directory of the aerial images"""
-    blocklot_labels = fetch_labels(obj["db"])
-    preds = pd.read_csv(preds, index_col="blocklot")
-    blocklots = preds.head(top_n).index.values
-    cropper = ImageCropper(obj["db"], image_root)
-    blocklot_sections = []
-    for blocklot in tqdm(blocklots, desc="Writing blocklots", smoothing=0):
-        pixels = cropper.pixels_for_blocklot(blocklot, buffer=20)
-        np.nan_to_num(pixels, nan=255.0, copy=False)
-        base64_data = numpy_to_base64(pixels.astype(np.uint8))
-        blocklot_sections.append(
-            f"""<tr>
-            <td>{blocklot}</td>
-            <td>{preds.at[blocklot,'damaged']:.5}</td>
-            <td>{blocklot_labels.get(blocklot, '')}</td>
-            <td><a href="{preds.at[blocklot, 'codemap_ext']}" target="_blank">CoDeMap</a></td>
-            <td><img src="data:image/png;base64,{base64_data}"></td>
-            <td><input type="checkbox" name="{blocklot}"/></td>
-            </tr>"""
-        )
-    output = "report.html"
-    with open(output, "w") as f:
-        f.write(
-            f"""
-                <html>
-                <head>
-                    <style>
-                    html {{
-                        font-family: sans-serif;
-                        margin: 20px;
-                    }}
-                    img {{
-                        max-width: 800px;
-                    }}
-                    </style>
-                </head>
-                <body>
-                    <h1>Blocklots</h1>
-                    <button id="download">Download CSV</button>
-                    <table>
-                    <thead>
-                    <tr>
-                    <th>Blocklot</th>
-                    <th>Score</th>
-                    <th>Label</th>
-                    <th>Link</th>
-                    <th>Image</th>
-                    <th>Damaged?</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {''.join(blocklot_sections)}
-                    </tbody>
-                    </table>
-                    <script>
-                        const downloadBtn = document.getElementById('download');
-
-                        downloadBtn.addEventListener('click', () => {{
-                        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-                        const csvData = [];
-
-                        checkboxes.forEach((checkbox) => {{
-                            const {{ name, value, checked }} = checkbox;
-                            csvData.push(`${{name}},${{value}},${{checked}}`);
-                        }});
-
-                        const csvContent = 'Blocklot,Value,Checked\\n' + csvData.join('\\n');
-                        const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
-                        const url = URL.createObjectURL(blob);
-                        const link = document.createElement('a');
-                        link.setAttribute('href', url);
-                        link.setAttribute('download', 'checkbox_states.csv');
-                        link.style.visibility = 'hidden';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                        }});
-                    </script>
-                </body>
-                </html>"""
-        )
-    print(f"Wrote output to {output}")
-
-
-# TODO Move this somewhere nice
-def pull_out_best(scores):
-    return sorted(scores, key=lambda k: np.mean(scores[k]["test_f1"]), reverse=True)[0]
-
-
-def graph_model_scores(scores, filename):
-    # Initialize lists to store summary statistics
-    f1_means, f1_stds = [], []
-    precision_means, precision_stds = [], []
-    recall_means, recall_stds = [], []
-    fit_time_means, fit_time_stds = [], []
-    score_time_means, score_time_stds = [], []
-
-    # Iterate over models and calculate summary statistics
-    for path, metrics in scores.items():
-        f1_means.append(np.mean(metrics["test_f1"]))
-        f1_stds.append(np.std(metrics["test_f1"]))
-
-        precision_means.append(np.mean(metrics["test_precision"]))
-        precision_stds.append(np.std(metrics["test_precision"]))
-
-        recall_means.append(np.mean(metrics["test_recall"]))
-        recall_stds.append(np.std(metrics["test_recall"]))
-
-        fit_time_means.append(np.mean(metrics["fit_time"]))
-        fit_time_stds.append(np.std(metrics["fit_time"]))
-
-        score_time_means.append(np.mean(metrics["score_time"]))
-        score_time_stds.append(np.std(metrics["score_time"]))
-
-    # Plotting
-    fig, axs = plt.subplots(5, 1, figsize=(10, 20))  # 5 rows for 5 metrics
-
-    # F1 Score Plot
-    axs[0].errorbar(range(len(scores)), f1_means, yerr=f1_stds, fmt="o")
-    axs[0].set_title("F1 Score of Models")
-    axs[0].set_ylabel("F1 Score")
-
-    # Precision Plot
-    axs[1].errorbar(range(len(scores)), precision_means, yerr=precision_stds, fmt="o")
-    axs[1].set_title("Precision of Models")
-    axs[1].set_ylabel("Precision")
-
-    # Recall Plot
-    axs[2].errorbar(range(len(scores)), recall_means, yerr=recall_stds, fmt="o")
-    axs[2].set_title("Recall of Models")
-    axs[2].set_ylabel("Recall")
-
-    # Fit Time Plot
-    axs[3].errorbar(range(len(scores)), fit_time_means, yerr=fit_time_stds, fmt="o")
-    axs[3].set_title("Fit Time of Models")
-    axs[3].set_ylabel("Fit Time (s)")
-
-    # Score Time Plot
-    axs[4].errorbar(range(len(scores)), score_time_means, yerr=score_time_stds, fmt="o")
-    axs[4].set_title("Score Time of Models")
-    axs[4].set_ylabel("Score Time (s)")
-    axs[4].set_xlabel("Model Index")
-
-    plt.tight_layout()
-    fig.savefig(filename, dpi=300)
+    report = Reporter(obj["db"]).html_report(preds, image_root, top_n)
+    output.write(report)
+    click.echo(f"Wrote HTML report to {output.name}")
 
 
 @roofs.group()
@@ -588,7 +378,7 @@ def dump(hdf5, output, blocklots):
 @click.pass_obj
 def import_sheet(
     obj,
-    inspection_notes: Optional[Path] = None,
+    inspection_notes: Path | None = None,
 ):
     """Import spreadsheets of data
 

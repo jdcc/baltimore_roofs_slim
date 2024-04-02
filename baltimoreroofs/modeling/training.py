@@ -1,22 +1,22 @@
 import gc
 import pickle
 import uuid
-from collections import namedtuple
 from itertools import product
 from pathlib import Path
 
 import h5py
-from joblib import dump
 import pandas as pd
+from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_validate
+from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from tqdm.auto import tqdm
 
-from ..data import Database, fetch_blocklots_imaged
+from ..data import Database, build_dataset, fetch_blocklots_imaged
+from ..reporting import graph_model_scores
 from .image_model import ImageModel
 from .models import fetch_blocklots_imaged_and_labeled, write_completed_preds_to_db
 
-SEED = 2
+SEED = 0
 
 
 class Trainer:
@@ -89,8 +89,8 @@ def train_image_model(db: Database, models_path: Path, hdf5: Path, seed: int):
         dropout=0.9,
         seed=seed,
     )
-    blocklots = fetch_blocklots_imaged_and_labeled(db, hdf5)
-    X, y = list(blocklots.keys()), list(blocklots.values())
+    labeled_blocklots = fetch_blocklots_imaged_and_labeled(db, hdf5)
+    X, y = list(labeled_blocklots.keys()), list(labeled_blocklots.values())
     model.fit(X, y)
     with open(models_path / "image_model.pkl", "wb") as f:
         pickle.dump(model.to_save(), f, protocol=5)
@@ -109,14 +109,22 @@ def calc_param_space(param_values):
     ]
 
 
-def flatten_X_y(
-    X: dict[str, dict[str, float]], y: dict[str, int | None]
-) -> tuple[list[list[float]], list[int | None], list[str]]:
-    flat_X, flat_y = [], []
-    feature_order = list(X.keys())
-    blocklot_order = list(next(iter(X.values())).keys())
-    for blocklot in blocklot_order:
-        row = [X[feature][blocklot] for feature in feature_order]
-        flat_X.append(row)
-        flat_y.append(y.get(blocklot, None))
-    return flat_X, flat_y, blocklot_order
+def train_many_models(db, model_path, hdf5, max_date):
+    blocklot_labels = fetch_blocklots_imaged_and_labeled(db, hdf5)
+    print(f"Fetched {len(blocklot_labels):,} labeled blocklots")
+    blocklots, labels = list(blocklot_labels.keys()), list(blocklot_labels.values())
+    train, test = train_test_split(
+        blocklots, test_size=0.3, stratify=labels, random_state=SEED
+    )
+    train_X, train_y, _ = build_dataset(db, hdf5, train, blocklot_labels, max_date)
+    print(f"Training with {len(train):,} examples, {sum(train_y):,} with damage")
+    trainer = Trainer(model_path)
+    scores, params = trainer.train(train_X, train_y)
+    mean_scores = {
+        model: ({name: sum(numbers) / len(numbers) for name, numbers in metric.items()})
+        for model, metric in scores.items()
+    }
+    score_df = pd.DataFrame.from_dict(mean_scores, orient="index")
+    df = score_df.join(pd.DataFrame.from_dict(params, orient="index"))
+    fig = graph_model_scores(scores)
+    return df, fig

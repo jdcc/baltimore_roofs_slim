@@ -2,7 +2,6 @@ import glob
 import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Optional, Union
 
 import h5py
 import numpy as np
@@ -11,10 +10,12 @@ import rasterio
 import rasterio.mask
 import rasterio.warp
 import shapely
+import torch
 from psycopg2 import sql
 from shapely.geometry.multipolygon import MultiPolygon
 from shapely.geometry.polygon import Polygon
 from shapely.ops import transform
+from torchvision.transforms.functional import rgb_to_grayscale
 from tqdm.auto import tqdm
 
 from .blocklots import split_blocklot
@@ -52,12 +53,12 @@ class ImageCropper:
         return glob.glob(str(path / f"*Ortho*.{file_ext}"))
 
     def _find_images_for_shape(
-        self, shape: Union[Polygon, MultiPolygon]
+        self, shape: Polygon | MultiPolygon
     ) -> list[rasterio.DatasetReader]:
         """Find all images for a given shape
 
         Args:
-            shape (Union[Polygon, MultiPolygon]): The Shapely shape for which to find
+            shape (Polygon | MultiPolygon): The Shapely shape for which to find
                 images.
 
         Returns:
@@ -83,7 +84,7 @@ class ImageCropper:
 
     def pixels_for_blocklot(
         self, blocklot: str, *to_shape_args, **to_shape_kwargs
-    ) -> np.ndarray:
+    ) -> np.ndarray | None:
         """Return the pixel values for an aerial image of a blocklot.
 
         Args:
@@ -298,3 +299,37 @@ def count_datasets_in_hdf5(h5file):
     h5file.visit(is_dataset)
 
     return n_datasets[0]
+
+
+class DarkImageBaseline:
+    def __init__(self, dark_threshold):
+        self.threshold = dark_threshold
+
+    def fit(self, X, y):
+        return self
+
+    def preprocess(self, X):
+        numpy_to_tensor(X)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray | None:
+        # How much of each image is darker than the darkness threshold?
+        if X.ndim == 0:
+            return None
+        X = rgb_to_grayscale(numpy_to_tensor(X).unsqueeze(0))
+        is_darker = torch.where(X.isnan(), X, X < self.threshold).to(torch.float32)
+        return is_darker.nanmean(axis=(2, 3), dtype=torch.float32).squeeze().item()
+
+
+# Reorder given matplotlib and pytorch have different order of channel, height, width.
+# pytorch:    [C, H, W]
+# matplotlib: [H, W, C]
+TENSOR_TO_NUMPY = [1, 2, 0]
+NUMPY_TO_TENSOR = [2, 0, 1]
+
+
+def tensor_to_numpy(t):
+    return t.numpy().transpose(TENSOR_TO_NUMPY)
+
+
+def numpy_to_tensor(n):
+    return torch.from_numpy(n.transpose(NUMPY_TO_TENSOR))

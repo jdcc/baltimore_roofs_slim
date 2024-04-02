@@ -1,11 +1,11 @@
-from psycopg2 import sql, errors
+from psycopg2 import errors, sql
 
 from .data_set_importer import (
+    CLEAN_SCHEMA,
+    RAW_SCHEMA,
     DataSetImporter,
     GeodatabaseImporter,
     InspectionNotesImporter,
-    RAW_SCHEMA,
-    CLEAN_SCHEMA,
 )
 from .database import Database
 

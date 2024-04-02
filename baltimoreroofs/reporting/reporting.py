@@ -1,19 +1,22 @@
+import base64
+import io
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from PIL import Image
 from psycopg2 import sql
 from sklearn.metrics import precision_recall_curve
+from tqdm.auto import tqdm
 
-from ..data import fetch_image_from_hdf5
-from ..modeling import fetch_blocklot_label
+from ..data import ImageCropper, fetch_image_from_hdf5
+from ..modeling import fetch_blocklot_label, fetch_labels
 
 
 class Reporter:
-    def __init__(self, db, hdf5: Path):
+    def __init__(self, db):
         self.db = db
-        self.hdf5 = hdf5
 
     def blocklot_lat_lon(self, blocklots: list[str]) -> dict[str, list[float]]:
         """Get the latitude and longitude of the center of a blocklot"""
@@ -88,8 +91,8 @@ class Reporter:
         lat_lon = self.blocklot_lat_lon([blocklot])[blocklot]
         return self.codemap_ext_url(lat_lon[1], lat_lon[0])
 
-    def plot_blocklot(self, blocklot, title=None):
-        image = fetch_image_from_hdf5(blocklot, hdf5_filename=self.hdf5)
+    def plot_blocklot(self, blocklot, hdf5, title=None):
+        image = fetch_image_from_hdf5(blocklot, hdf5)
         pixels = np.nan_to_num(image[:], nan=255).astype("uint8")
         fig, ax = plt.subplots(figsize=(5, 5))
         ax.imshow(pixels)
@@ -145,27 +148,8 @@ class Reporter:
         fig.tight_layout()
         plt.show()
 
-    def get_scores_and_labels(self, model_id):
-        preds = Predictor.load_preds(model_id, split_id, schema_prefix)
-        return self.evaluator.build_score_df(preds)
-
-    def get_top_k(self, model_id, k):
-        return (
-            self.get_scores_and_labels(model_id, split_id)
-            .sort_values("score", ascending=False)
-            .head(k)
-        )
-
-    def plot_prk_curve_for_model_group(self, group_id, schema_prefix, *args, **kwargs):
-        e = self.evaluator.load_group_eval(group_id, schema_prefix)
-        self.plot_prk_curve(e, *args, **kwargs)
-
-    def plot_prk_curve_for_split(self, model_id, split_id, *args, **kwargs):
-        e = self.evaluator.load_eval(model_id, split_id)
-        self.plot_prk_curve(e, *args, **kwargs)
-
     def plot_prk_curve(
-        self, eval_metrics, title=None, xmin=-0.03, xmax=1.03, legend=True
+        self, eval_metrics, title=None, xmin=-0.03, xmax=1.03, legend=True, top_k=1000
     ):
         e = eval_metrics
         p = e[
@@ -178,7 +162,7 @@ class Reporter:
         x = p.ref
         base_rate = p.loc[p.ref == 1, "value"].values[0]
         n = e.loc[(e.ref == 1) & (e.metric == "n"), "value"].values[0]
-        k = config.evaluator.top_k
+        k = top_k
 
         plt.rc("font", size=13)
         fig, ax1 = plt.subplots(figsize=(8, 4))
@@ -243,3 +227,91 @@ class Reporter:
         plt.title(name)
         plt.show()
         plt.clf()
+
+    @staticmethod
+    def numpy_to_base64(arr: np.array) -> str:
+        """Encode a numpy array image as base64"""
+        img = Image.fromarray(arr)
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        b64_string = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        return b64_string
+
+    def html_report(self, preds: Path, image_root: Path, top_n: int) -> str:
+        """Generate an HTML report of predictions"""
+        blocklot_labels = fetch_labels(self.db)
+        preds_df = pd.read_csv(preds, index_col="blocklot")
+        blocklots = preds_df.head(top_n).index.values
+        cropper = ImageCropper(self.db, str(image_root))
+        blocklot_sections = []
+        for blocklot in tqdm(blocklots, desc="Writing blocklots", smoothing=0):
+            pixels = cropper.pixels_for_blocklot(blocklot, buffer=20)
+            np.nan_to_num(pixels, nan=255.0, copy=False)
+            base64_data = self.numpy_to_base64(pixels.astype(np.uint8))
+            blocklot_sections.append(
+                f"""<tr>
+                <td>{blocklot}</td>
+                <td>{preds_df.at[blocklot,'damaged']:.5}</td>
+                <td>{blocklot_labels.get(blocklot, '')}</td>
+                <td><a href="{preds_df.at[blocklot, 'codemap_ext']}" target="_blank">CoDeMap</a></td>
+                <td><img src="data:image/png;base64,{base64_data}"></td>
+                <td><input type="checkbox" name="{blocklot}"/></td>
+                </tr>"""
+            )
+        return f"""
+                    <html>
+                    <head>
+                        <style>
+                        html {{
+                            font-family: sans-serif;
+                            margin: 20px;
+                        }}
+                        img {{
+                            max-width: 800px;
+                        }}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Blocklots</h1>
+                        <button id="download">Download CSV</button>
+                        <table>
+                        <thead>
+                        <tr>
+                        <th>Blocklot</th>
+                        <th>Score</th>
+                        <th>Label</th>
+                        <th>Link</th>
+                        <th>Image</th>
+                        <th>Damaged?</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {''.join(blocklot_sections)}
+                        </tbody>
+                        </table>
+                        <script>
+                            const downloadBtn = document.getElementById('download');
+
+                            downloadBtn.addEventListener('click', () => {{
+                            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+                            const csvData = [];
+
+                            checkboxes.forEach((checkbox) => {{
+                                const {{ name, value, checked }} = checkbox;
+                                csvData.push(`${{name}},${{value}},${{checked}}`);
+                            }});
+
+                            const csvContent = 'Blocklot,Value,Checked\\n' + csvData.join('\\n');
+                            const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
+                            const url = URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', 'checkbox_states.csv');
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            }});
+                        </script>
+                    </body>
+                    </html>"""

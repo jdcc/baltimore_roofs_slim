@@ -4,8 +4,7 @@ from datetime import timedelta
 from psycopg2 import sql
 from tqdm.auto import tqdm
 
-from .images import fetch_image_from_hdf5
-from ..modeling import DarkImageBaseline
+from .images import DarkImageBaseline, fetch_image_from_hdf5
 
 
 def build_building_permits_features(db, blocklots, max_date, _):

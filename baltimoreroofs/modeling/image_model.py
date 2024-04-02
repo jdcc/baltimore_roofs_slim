@@ -12,15 +12,14 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms.functional as transform
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.model_selection import train_test_split
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import models
 from tqdm.auto import tqdm
 
 # from .config import config
-from ..data import fetch_image_from_hdf5
-from .models import numpy_to_tensor
+from ..data import fetch_image_from_hdf5, numpy_to_tensor
 
 # TODO put into config
 SEED = 1

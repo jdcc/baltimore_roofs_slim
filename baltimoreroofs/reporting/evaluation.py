@@ -1,7 +1,10 @@
 from collections import namedtuple
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
+SEED = 0
 EvalCounts = namedtuple(
     "EvalCounts",
     ("n", "n_labeled", "n_labeled_pos", "n_labeled_neg", "precision", "recall"),
@@ -53,3 +56,67 @@ def build_evaluation(
         top_k_counts[k] = pull_eval_counts(top_k, n_total_positive)
 
     return threshold_counts, top_k_counts
+
+
+def evaluate(db, model_path, output, hdf5, max_date, top_k, eval_test_only):
+    """Evaluate the performance of a given model"""
+    # TODO
+    pass
+
+
+def graph_model_scores(scores):
+    # Initialize lists to store summary statistics
+    f1_means, f1_stds = [], []
+    precision_means, precision_stds = [], []
+    recall_means, recall_stds = [], []
+    fit_time_means, fit_time_stds = [], []
+    score_time_means, score_time_stds = [], []
+
+    # Iterate over models and calculate summary statistics
+    for path, metrics in scores.items():
+        f1_means.append(np.mean(metrics["test_f1"]))
+        f1_stds.append(np.std(metrics["test_f1"]))
+
+        precision_means.append(np.mean(metrics["test_precision"]))
+        precision_stds.append(np.std(metrics["test_precision"]))
+
+        recall_means.append(np.mean(metrics["test_recall"]))
+        recall_stds.append(np.std(metrics["test_recall"]))
+
+        fit_time_means.append(np.mean(metrics["fit_time"]))
+        fit_time_stds.append(np.std(metrics["fit_time"]))
+
+        score_time_means.append(np.mean(metrics["score_time"]))
+        score_time_stds.append(np.std(metrics["score_time"]))
+
+    # Plotting
+    fig, axs = plt.subplots(5, 1, figsize=(10, 20))  # 5 rows for 5 metrics
+
+    # F1 Score Plot
+    axs[0].errorbar(range(len(scores)), f1_means, yerr=f1_stds, fmt="o")
+    axs[0].set_title("F1 Score of Models")
+    axs[0].set_ylabel("F1 Score")
+
+    # Precision Plot
+    axs[1].errorbar(range(len(scores)), precision_means, yerr=precision_stds, fmt="o")
+    axs[1].set_title("Precision of Models")
+    axs[1].set_ylabel("Precision")
+
+    # Recall Plot
+    axs[2].errorbar(range(len(scores)), recall_means, yerr=recall_stds, fmt="o")
+    axs[2].set_title("Recall of Models")
+    axs[2].set_ylabel("Recall")
+
+    # Fit Time Plot
+    axs[3].errorbar(range(len(scores)), fit_time_means, yerr=fit_time_stds, fmt="o")
+    axs[3].set_title("Fit Time of Models")
+    axs[3].set_ylabel("Fit Time (s)")
+
+    # Score Time Plot
+    axs[4].errorbar(range(len(scores)), score_time_means, yerr=score_time_stds, fmt="o")
+    axs[4].set_title("Score Time of Models")
+    axs[4].set_ylabel("Score Time (s)")
+    axs[4].set_xlabel("Model Index")
+
+    plt.tight_layout()
+    return fig

@@ -1,6 +1,6 @@
-from collections import namedtuple
 import logging
 import os
+from collections import namedtuple
 from typing import Any, Sequence
 
 import psycopg2

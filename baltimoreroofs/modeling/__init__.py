@@ -5,13 +5,12 @@ from typing import Optional
 
 from ..data import Database, fetch_all_blocklots
 from .models import (
-    DarkImageBaseline,
     fetch_blocklots_imaged_and_labeled,
     fetch_labels,
     fetch_blocklot_label,
     is_gpu_available,
 )
-from .training import train_image_model
+from .training import train_image_model, Trainer, train_many_models
 
 
 def build_label_str(labels: dict[str, Optional[int]]):
