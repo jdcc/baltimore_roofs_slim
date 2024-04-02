@@ -43,7 +43,7 @@ The main mode of interacting with this project is through a series of command-li
 ```
 roofs --help                      Shows help documentation. Works for all subcommands
 
-roofs db assemble-ground-truth    Put together the ground truth to train against
+roofs db filter                   Filter the ground truth to just the row homes we're interested in
 roofs db import-gdb               Import a Geodatabase file
 roofs db import-sheet             Import spreadsheets of data
 roofs db reset                    Remove all data from the database
@@ -77,7 +77,7 @@ $ roofs db import-gdb data/roofdata_2024.gdb \
   --tax-parcel-address=tax_parcel_address \
   --redlining=redlining \
   --vacant-building-notices=open_notice_vacant
-$ roofs db assemble-ground-truth
+$ roofs db filter
 $ roofs db status
 $ roofs images crop data/images data/images.hdf5
 $ roofs images status data/images.hdf5

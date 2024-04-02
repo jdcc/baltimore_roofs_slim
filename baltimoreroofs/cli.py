@@ -459,8 +459,8 @@ def reset(obj):
     type=click.DateTime(),
 )
 @click.pass_obj
-def assemble_ground_truth(obj, label_date):
-    """Put together the ground truth to train against
+def filter(obj, label_date):
+    """Filter the ground truth to just the row homes we're interested in
 
     The label date option makes sure that blocklots that have
     seen a demolition after damage was labeled doesn't make it
