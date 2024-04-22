@@ -59,6 +59,7 @@ roofs train model                 Train a new model to classify roof damage seve
 
 roofs report predictions          Generate roof damage scores from a given model
 roofs report evals                Evaluate the performance of a given model
+roofs report html                 Generate an HTML report of predictions
 
 roofs misc merge-sheets           Merge a number of CSVs or Excel files on blocklot
 ```
