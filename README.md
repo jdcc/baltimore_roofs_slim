@@ -87,6 +87,7 @@ $ roofs train image-model data/images.hdf5
 $ roofs train model data/images.hdf5 models.csv 
 $ roofs report evals models/6c87d283-bfee-4075-bd72-a0d4355d356a.pkl 6c87_eval.csv data/images.hdf5
 $ roofs report predictions models/6c87d283-bfee-4075-bd72-a0d4355d356a.pkl 6c87_preds.csv data/images.hdf5
+$ roofs report html 6c87_preds.csv data/aerial_images 6c87_report.html
 $ roofs misc merge-sheets merged.csv 6c87_preds.csv 2022_data.xlsx
 ```
 

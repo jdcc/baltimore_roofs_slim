@@ -183,22 +183,18 @@ def predictions(obj, model_path, output, hdf5, blocklots, max_date):
     OUTPUT is the path at which the output CSV of predictions should be written
     HDF5 is the path to the hdf5 file containing blocklot images
     """
-    X_creator = MatrixCreator(obj["db"], hdf5)
     if len(blocklots) == 0:
         with h5py.File(hdf5) as f:
             blocklots = fetch_blocklots_imaged(f)
-    print(f"Predicting on {len(blocklots):,} blocklots")
-    X = X_creator.build_features(blocklots, max_date)
-    X, _, _ = flatten_X_y(X, {})
-    model, _ = load_model(model_path)
-    preds = model.predict_proba(X)
-    df = pd.DataFrame(preds, index=blocklots, columns=["not_damaged", "damaged"])
-    df.index.name = "blocklot"
     reporter = Reporter(obj["db"])
+    preds = reporter.predictions(model_path, hdf5, blocklots, max_date)
+    df = pd.DataFrame(preds, index=blocklots, columns=["damage_score"])
+    df.index.name = "blocklot"
+    df["damage_score"] = preds
     df["codemap"] = pd.Series(reporter.codemap_urls(df.index))
     df["codemap_ext"] = pd.Series(reporter.codemap_ext_urls(df.index))
     df["pictometry"] = pd.Series(reporter.pictometry_urls(df.index))
-    df.sort_values("damaged", ascending=False, inplace=True)
+    df.sort_values("damage_score", ascending=False, inplace=True)
     df.to_csv(output)
     print(f"Wrote predictions to {output}")
 
@@ -250,13 +246,20 @@ def evals(obj, model_path, output, hdf5, max_date, top_k, eval_test_only):
     the training set. This means that if the model overfit to the training data,
     the performance will look better than you'll be able to expect on new data.
     """
-    df, fig = evaluate(
-        obj["db"], model_path, output, hdf5, max_date, top_k, eval_test_only
+    threshold_counts, top_k_counts = evaluate(
+        obj["db"], model_path, hdf5, max_date, top_k, eval_test_only
     )
-    graph_filename = output.with_suffix(".png")
-    fig.savefig(graph_filename, dpi=300)
+    # graph_filename = output.with_suffix(".png")
+    # fig.savefig(graph_filename, dpi=300)
+    # print(threshold_counts)
+    df = pd.concat(
+        [
+            pd.DataFrame.from_dict(top_k_counts, orient="index"),
+            pd.DataFrame.from_dict(threshold_counts, orient="index"),
+        ]
+    )
     df.to_csv(output)
-    click.echo(f"Wrote scores to {output} and graph to {graph_filename}")
+    click.echo(f"Wrote scores to {output}")  # and graph to {graph_filename}")
 
 
 @report.command()
@@ -323,6 +326,18 @@ def crop(obj, image_root, output, blocklots, overwrite):
     if len(blocklots) == 0:
         blocklots = fetch_all_blocklots(db, db.CLEAN_SCHEMA)
     cropper.write_h5py(output, blocklots, overwrite)
+
+
+@images.command()
+@click.argument(
+    "image-root",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+@click.pass_obj
+def test(obj, image_root):
+    db = obj["db"]
+    cropper = ImageCropper(db, image_root)
+    print(cropper.pixels_for_blocklot("3845 065").shape)
 
 
 @images.command(name="status")
@@ -456,21 +471,23 @@ def reset(obj):
 
 @db.command()
 @click.option(
-    "--label-date",
+    "--min-demo-date",
     "-d",
-    help="The date aerial images were last labeled",
-    default="2018-08-01",
+    help="Exclude blocklots that have had a demo after this date",
+    default="2014-01-01",  # Picked just by looking at aerial images of what is built and when demos took place
     type=click.DateTime(),
 )
 @click.pass_obj
-def filter(obj, label_date):
+def filter(obj, min_demo_date):
     """Filter the ground truth to just the row homes we're interested in
 
     The label date option makes sure that blocklots that have
     seen a demolition after damage was labeled doesn't make it
     into the dataset."""
     db = obj["db"]
-    GeodatabaseImporter(db).filter_to_cohort(label_date)
+    click.echo("Filtering blocklots...")
+    GeodatabaseImporter(db).filter_to_cohort(min_demo_date)
+    click.echo("Filtered blocklots.")
 
 
 @roofs.group()

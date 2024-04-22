@@ -18,10 +18,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import models
 from tqdm.auto import tqdm
 
-# from .config import config
 from ..data import fetch_image_from_hdf5, numpy_to_tensor
 
-# TODO put into config
 SEED = 1
 MODEL_DIR = Path("/tmp")
 

@@ -433,9 +433,11 @@ class GeodatabaseImporter(DataSetImporter):
                     ON ST_Intersects(b.shape, tpa.shape)
                 LEFT JOIN {demo_table} AS demo
                     ON tpa.blocklot = demo.blocklot
-                WHERE trim(zonecode) IN ('R-6', 'R-7', 'R-8', 'R-9', 'R-10')
-                    AND trim(usegroup) IN ('E', 'R')
+                WHERE trim(zonecode) IN ('R-6', 'R-7', 'R-8', 'R-9', 'R-10', 'TOD-1', 'OR-1*', 'C-1')
+                    AND trim(usegroup) IN ('E', 'R', 'C')
+                    AND (bfcvimpr > 0 OR year_build > 0)
                     AND (date_demo_finish IS NULL OR date_demo_finish < %s)
+                    AND tpa.shape_area < 3000
             )
             DELETE FROM {tpa_table} AS tpa
             WHERE tpa.blocklot NOT IN (SELECT blocklot FROM blocklots);

@@ -84,7 +84,7 @@ def train_image_model(db: Database, models_path: Path, hdf5: Path, seed: int):
         batch_size=512,
         learning_rate=1e-5,
         angle_variations=[0, 20, 45, 80],
-        num_epochs=20,
+        num_epochs=40,
         unfreeze=1,
         dropout=0.9,
         seed=seed,

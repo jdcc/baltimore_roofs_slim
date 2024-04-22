@@ -3,6 +3,12 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import h5py
+from sklearn.model_selection import train_test_split
+
+from ..data import fetch_blocklots_imaged
+from ..modeling import fetch_blocklots_imaged_and_labeled
+from .reporting import Reporter
 
 SEED = 0
 EvalCounts = namedtuple(
@@ -58,10 +64,23 @@ def build_evaluation(
     return threshold_counts, top_k_counts
 
 
-def evaluate(db, model_path, output, hdf5, max_date, top_k, eval_test_only):
+def evaluate(db, model_path, hdf5, max_date, top_k, eval_test_only):
     """Evaluate the performance of a given model"""
-    # TODO
-    pass
+    reporter = Reporter(db)
+    blocklot_labels = fetch_blocklots_imaged_and_labeled(db, hdf5)
+    if eval_test_only:
+        blocklots, labels = list(blocklot_labels.keys()), list(blocklot_labels.values())
+        _, blocklots = train_test_split(
+            blocklots, test_size=0.3, stratify=labels, random_state=SEED
+        )
+    else:
+        with h5py.File(hdf5) as f:
+            blocklots = fetch_blocklots_imaged(f)
+    preds = reporter.predictions(model_path, hdf5, blocklots, max_date)
+    df = pd.DataFrame(
+        {"label": {b: l for b, l in blocklot_labels.items()}, "score": preds}
+    )
+    return build_evaluation(df, thresholds=np.linspace(0.0, 1.0, 200), ks=top_k)
 
 
 def graph_model_scores(scores):

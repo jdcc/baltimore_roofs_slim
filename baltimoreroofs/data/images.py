@@ -1,5 +1,7 @@
+import concurrent.futures
 import glob
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -7,6 +9,8 @@ import h5py
 import numpy as np
 import pyproj
 import rasterio
+import rasterio.io
+import rasterio.merge
 import rasterio.mask
 import rasterio.warp
 import shapely
@@ -66,8 +70,7 @@ class ImageCropper:
         """
         shape_images = []
         for image, bounds in self._file_bounds.items():
-            # TODO Handle block lots that break across tile bounds
-            if bounds.contains(shape):
+            if bounds.intersects(shape):
                 shape_images.append(rasterio.open(image))
         return shape_images
 
@@ -82,6 +85,41 @@ class ImageCropper:
         """
         return self._find_images_for_shape(blocklot_to_shape(self._db, blocklot))
 
+    def image_for_blocklot(self, blocklot: str) -> rasterio.DatasetReader:
+        """Return a single image that shows as much of a blocklot as possible
+
+        One issue that arises is that blocklots can span multiple images. This
+        method will turn all those images into a single image so it's easier
+        to handle downstream."""
+        images = self.images_for_blocklot(blocklot)
+        if len(images) == 0:
+            return None
+        if len(images) == 1:
+            return images[0]
+        if len(images) > 2:
+            logging.warning(
+                "Blocklot %s wants to merge %s tiles", blocklot, len(images)
+            )
+
+        merged_dataset, merged_transform = rasterio.merge.merge(images)
+        profile = images[0].profile.copy()
+        for image in images:
+            image.close()
+        profile.update(
+            {
+                "width": merged_dataset.shape[2],
+                "height": merged_dataset.shape[1],
+                "transform": merged_transform,
+                "driver": "GTiff",
+                "photometric": "RGB",
+            }
+        )
+        memfile = rasterio.io.MemoryFile()
+        merged_dataset_reader = memfile.open(**profile)
+        merged_dataset_reader.write(merged_dataset)
+        memfile.close()
+        return merged_dataset_reader
+
     def pixels_for_blocklot(
         self, blocklot: str, *to_shape_args, **to_shape_kwargs
     ) -> np.ndarray | None:
@@ -95,13 +133,13 @@ class ImageCropper:
             np.ndarray: The pixel values for the first aerial image.
         """ """"""
         shape = blocklot_to_shape(self._db, blocklot, *to_shape_args, **to_shape_kwargs)
-        shape_tiles = self.images_for_blocklot(blocklot)
-        if len(shape_tiles) == 0:
+        image = self.image_for_blocklot(blocklot)
+        if image is None:
             logging.debug("Shape for blocklot {} not found in tiles".format(blocklot))
             return None
-        # TODO Handle block lots that break across tile bounds
-        tile = shape_tiles[0]
-        return self._mask_image_to_shape(tile, shape)
+        pixels = self._mask_image_to_shape(image, shape)
+        image.close()
+        return pixels
 
     def _mask_image_to_shape(
         self, tile: rasterio.DatasetReader, shape: Polygon
@@ -130,6 +168,57 @@ class ImageCropper:
             i,
             [1, 2, 0],
         )
+
+    def write_h5py_parallel(
+        self, output_file: Path, blocklots: list[str], overwrite=False
+    ):
+        f = h5py.File(str(output_file), "a")
+        without_pixels = set()
+
+        def process_blocklot(this_blocklot):
+            block, lot = split_blocklot(this_blocklot)
+            key = f"{block}/{lot}"
+            if key not in f or overwrite:
+                try:
+                    pixels = self.pixels_for_blocklot(this_blocklot)
+                except Exception as e:
+                    logging.error(
+                        "Error fetching pixels for blocklot %s", this_blocklot
+                    )
+                    logging.exception(e)
+                    return None
+                if pixels is None:
+                    without_pixels.add(this_blocklot)
+                    return
+                return key, pixels
+            return None
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = []
+            for this_blocklot in blocklots:
+                future = executor.submit(process_blocklot, this_blocklot)
+                futures.append(future)
+
+            for future in tqdm(
+                concurrent.futures.as_completed(futures),
+                total=len(futures),
+                desc="Cropping",
+                smoothing=0,
+            ):
+                result = future.result()
+                if result is not None:
+                    key, pixels = result
+                    if key in f and overwrite:
+                        del f[key]
+                    f.create_dataset(key, data=pixels)
+
+        if len(without_pixels) > 0:
+            logger.warn("Images were not created for %s blocklots", len(without_pixels))
+            with NamedTemporaryFile("w", delete=False) as temp_file:
+                temp_file.write("\n".join(f"{bl}" for bl in without_pixels))
+                logger.warn("Blocklots without images written to %s", temp_file.name)
+
+        f.close()
 
     def write_h5py(self, output_file: Path, blocklots: list[str], overwrite=False):
         f = h5py.File(str(output_file), "a")

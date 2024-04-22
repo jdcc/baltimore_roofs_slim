@@ -2,6 +2,7 @@ import base64
 import io
 from pathlib import Path
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -10,13 +11,29 @@ from psycopg2 import sql
 from sklearn.metrics import precision_recall_curve
 from tqdm.auto import tqdm
 
-from ..data import ImageCropper, fetch_image_from_hdf5
+from ..data import (
+    ImageCropper,
+    fetch_image_from_hdf5,
+    MatrixCreator,
+    fetch_blocklots_imaged,
+    flatten_X_y,
+)
 from ..modeling import fetch_blocklot_label, fetch_labels
+from ..modeling.models import load_model
 
 
 class Reporter:
     def __init__(self, db):
         self.db = db
+
+    def predictions(self, model_path, hdf5, blocklots, max_date):
+        X_creator = MatrixCreator(self.db, hdf5)
+        print(f"Predicting on {len(blocklots):,} blocklots")
+        X = X_creator.build_features(blocklots, max_date)
+        X, _, blocklots = flatten_X_y(X, {})
+        model, _ = load_model(model_path)
+        preds = model.predict_proba(X)
+        return dict(zip(blocklots, preds[:, 1]))
 
     def blocklot_lat_lon(self, blocklots: list[str]) -> dict[str, list[float]]:
         """Get the latitude and longitude of the center of a blocklot"""
@@ -251,8 +268,8 @@ class Reporter:
             blocklot_sections.append(
                 f"""<tr>
                 <td>{blocklot}</td>
-                <td>{preds_df.at[blocklot,'damaged']:.5}</td>
-                <td>{blocklot_labels.get(blocklot, '')}</td>
+                <td>{preds_df.at[blocklot,'damage_score']:.5}</td>
+                <td style="font-weight: bold; text-align: center;">{blocklot_labels.get(blocklot, '')}</td>
                 <td><a href="{preds_df.at[blocklot, 'codemap_ext']}" target="_blank">CoDeMap</a></td>
                 <td><img src="data:image/png;base64,{base64_data}"></td>
                 <td><input type="checkbox" name="{blocklot}"/></td>
@@ -268,6 +285,12 @@ class Reporter:
                         }}
                         img {{
                             max-width: 800px;
+                        }}
+                        table {{
+                            border-collapse: collapse;
+                        }}
+                        tr:hover {{
+                            background: #e9e9f2;
                         }}
                         </style>
                     </head>
