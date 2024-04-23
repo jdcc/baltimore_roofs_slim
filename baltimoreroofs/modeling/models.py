@@ -12,7 +12,7 @@ def is_gpu_available():
     return torch.cuda.is_available()
 
 
-def fetch_labels(db):
+def fetch_labels(db) -> dict[str, int]:
     query = sql.SQL("SELECT blocklot, label FROM {label_table}").format(
         label_table=sql.Identifier(db.CLEAN_SCHEMA, "ground_truth")
     )

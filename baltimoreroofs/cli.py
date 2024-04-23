@@ -24,7 +24,12 @@ from .data import (
     fetch_image_from_hdf5,
     flatten_X_y,
 )
-from .modeling import get_modeling_status, train_image_model, train_many_models
+from .modeling import (
+    get_modeling_status,
+    train_image_model,
+    train_many_models,
+    fetch_labels,
+)
 from .modeling.models import load_model
 from .reporting import Reporter, evaluate
 
@@ -180,7 +185,9 @@ def predictions(obj, model_path, output, hdf5, blocklots, max_date):
     """Generate roof damage scores from a given model
 
     MODEL_PATH is the path to a trained model
+
     OUTPUT is the path at which the output CSV of predictions should be written
+
     HDF5 is the path to the hdf5 file containing blocklot images
     """
     if len(blocklots) == 0:
@@ -188,9 +195,11 @@ def predictions(obj, model_path, output, hdf5, blocklots, max_date):
             blocklots = fetch_blocklots_imaged(f)
     reporter = Reporter(obj["db"])
     preds = reporter.predictions(model_path, hdf5, blocklots, max_date)
+    labels = fetch_labels(obj["db"])
     df = pd.DataFrame(preds, index=blocklots, columns=["damage_score"])
     df.index.name = "blocklot"
     df["damage_score"] = preds
+    df["label"] = labels
     df["codemap"] = pd.Series(reporter.codemap_urls(df.index))
     df["codemap_ext"] = pd.Series(reporter.codemap_ext_urls(df.index))
     df["pictometry"] = pd.Series(reporter.pictometry_urls(df.index))
