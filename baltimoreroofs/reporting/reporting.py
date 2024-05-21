@@ -305,7 +305,7 @@ class Reporter:
                         <th>Label</th>
                         <th>Link</th>
                         <th>Image</th>
-                        <th>Damaged?</th>
+                        <th>Selected</th>
                         </tr>
                         </thead>
                         <tbody>
