@@ -98,8 +98,9 @@ class ImageModel:
         }
 
     @classmethod
-    def load(cls, state):
+    def load(cls, state, hdf5):
         instance = cls(
+            hdf5,
             batch_size=state["batch_size"],
             learning_rate=state["learning_rate"],
             num_epochs=state["num_epochs"],

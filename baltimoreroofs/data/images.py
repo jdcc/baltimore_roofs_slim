@@ -422,3 +422,13 @@ def tensor_to_numpy(t):
 
 def numpy_to_tensor(n):
     return torch.from_numpy(n.transpose(NUMPY_TO_TENSOR))
+
+
+def fetch_image_predictions(db, blocklots: list[str]) -> dict[str, float]:
+    resp = db.run_query(
+        sql.SQL("SELECT blocklot, score FROM {table} WHERE blocklot IN %s").format(
+            table=sql.Identifier(db.OUTPUT_SCHEMA, "image_model_predictions")
+        ),
+        (tuple(blocklots),),
+    )
+    return {row["blocklot"]: row["score"] for row in resp}

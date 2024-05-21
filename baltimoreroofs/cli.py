@@ -1,4 +1,5 @@
 import logging
+import pickle
 import random
 import string
 from pathlib import Path
@@ -22,7 +23,7 @@ from .data import (
     fetch_all_blocklots,
     fetch_blocklots_imaged,
     fetch_image_from_hdf5,
-    flatten_X_y,
+    fetch_image_predictions,
 )
 from .modeling import (
     get_modeling_status,
@@ -30,7 +31,8 @@ from .modeling import (
     train_many_models,
     fetch_labels,
 )
-from .modeling.models import load_model
+from .modeling.image_model import ImageModel
+from .modeling.models import write_completed_preds_to_db
 from .reporting import Reporter, evaluate
 
 load_dotenv()
@@ -337,16 +339,28 @@ def crop(obj, image_root, output, blocklots, overwrite):
     cropper.write_h5py(output, blocklots, overwrite)
 
 
-@images.command()
+@images.command(name="predict")
 @click.argument(
-    "image-root",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    "hdf5",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+)
+@click.option(
+    "--image-model",
+    "-m",
+    type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
+    help="path to image model",
+    default=this_dir.parent / "models" / "image_model.pkl",
 )
 @click.pass_obj
-def test(obj, image_root):
+def images_predict(obj, hdf5, image_model):
     db = obj["db"]
-    cropper = ImageCropper(db, image_root)
-    print(cropper.pixels_for_blocklot("3845 065").shape)
+    with open(image_model, "rb") as f:
+        model_state = pickle.load(f)
+    model = ImageModel.load(model_state, hdf5)
+    with h5py.File(hdf5) as f:
+        blocklots = fetch_blocklots_imaged(f)
+    preds = model.forward(blocklots)
+    write_completed_preds_to_db(db, "image_model", preds)
 
 
 @images.command(name="status")
@@ -370,6 +384,12 @@ def images_status(obj, hdf5):
         click.echo(f"\nThere are {n_datasets:,} blocklot images in the image database.")
         blocklots = random.sample(fetch_blocklots_imaged(f), k=3)
         click.echo(f"    Here are a few: {blocklots}")
+    image_preds = fetch_image_predictions(db, blocklots)
+    print(image_preds)
+    click.echo(
+        f"There are {len(image_preds):,} predictions from the image model "
+        "in the database."
+    )
 
 
 @images.command

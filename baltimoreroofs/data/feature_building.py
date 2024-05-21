@@ -4,7 +4,7 @@ from datetime import timedelta
 from psycopg2 import sql
 from tqdm.auto import tqdm
 
-from .images import DarkImageBaseline, fetch_image_from_hdf5
+from .images import DarkImageBaseline, fetch_image_from_hdf5, fetch_image_predictions
 
 
 def build_building_permits_features(db, blocklots, max_date, _):
@@ -352,13 +352,7 @@ def build_dark_pixels_features(_, blocklots, __, args):
 
 
 def build_image_model_features(db, blocklots, max_date, args):
-    resp = db.run_query(
-        sql.SQL("SELECT blocklot, score FROM {table} WHERE blocklot IN %s").format(
-            table=sql.Identifier(db.OUTPUT_SCHEMA, "image_model_predictions")
-        ),
-        (tuple(blocklots),),
-    )
-    blocklot_scores = {row["blocklot"]: row["score"] for row in resp}
+    blocklot_scores = fetch_image_predictions(db, blocklots)
     return {
         "image_model_score": blocklot_scores,
         "image_model_score_unknown": {

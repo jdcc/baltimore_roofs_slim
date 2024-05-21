@@ -5,6 +5,7 @@ from .images import (
     ImageCropper,
     count_datasets_in_hdf5,
     fetch_blocklots_imaged,
+    fetch_image_predictions,
     fetch_image_from_hdf5,
     numpy_to_tensor,
     tensor_to_numpy,
