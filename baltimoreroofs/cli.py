@@ -349,18 +349,19 @@ def crop(obj, image_root, output, blocklots, overwrite):
     "-m",
     type=click.Path(file_okay=True, dir_okay=False, exists=True, path_type=Path),
     help="path to image model",
-    default=this_dir.parent / "models" / "image_model.pkl",
+    default=this_dir.parent / "models" / "image_model.pth",
 )
 @click.pass_obj
 def images_predict(obj, hdf5, image_model):
+    """Make predictions using just the image model"""
     db = obj["db"]
-    with open(image_model, "rb") as f:
-        model_state = pickle.load(f)
-    model = ImageModel.load(model_state, hdf5)
+    model = ImageModel.load(image_model, hdf5)
+    click.echo(f"Running on {model.device}")
     with h5py.File(hdf5) as f:
         blocklots = fetch_blocklots_imaged(f)
     preds = model.forward(blocklots)
     write_completed_preds_to_db(db, "image_model", preds)
+    click.echo(f"Wrote {len(preds):,} predictions to database.")
 
 
 @images.command(name="status")
@@ -382,10 +383,9 @@ def images_status(obj, hdf5):
     with h5py.File(hdf5) as f:
         n_datasets = count_datasets_in_hdf5(f)
         click.echo(f"\nThere are {n_datasets:,} blocklot images in the image database.")
-        blocklots = random.sample(fetch_blocklots_imaged(f), k=3)
-        click.echo(f"    Here are a few: {blocklots}")
+        sample = random.sample(fetch_blocklots_imaged(f), k=3)
+        click.echo(f"    Here are a few: {sample}")
     image_preds = fetch_image_predictions(db, blocklots)
-    print(image_preds)
     click.echo(
         f"There are {len(image_preds):,} predictions from the image model "
         "in the database."

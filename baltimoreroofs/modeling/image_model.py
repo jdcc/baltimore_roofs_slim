@@ -1,5 +1,6 @@
 import random
 import string
+import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -59,7 +60,7 @@ class ImageModel:
         random_prefix = "".join(random.sample(string.ascii_letters, 4))
         now = time.strftime("%Y-%m-%d_%H-%M-%S")
         self.model_name = f"{now}_{random_prefix}"
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = self.pick_device()
 
         if self.load_model:
             self.model = torch.load(self.load_model)
@@ -81,7 +82,7 @@ class ImageModel:
             "optimizer": deepcopy(self.optimizer.state_dict()),
         }
 
-    def to_save(self):
+    def _state_dict(self):
         return {
             "best_state": self.best_state,
             "current_state": self.checkpoint(),
@@ -97,8 +98,29 @@ class ImageModel:
             "dropout": self.dropout,
         }
 
+    @staticmethod
+    def _fetch_module_state(module):
+        with tempfile.NamedTemporaryFile() as temp_file:
+            torch.save(module, temp_file)
+            temp_file.seek(0)
+            return temp_file.read()
+
+    def save(self, filename: str):
+        torch.save(self, filename)
+
+    @staticmethod
+    def pick_device():
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
     @classmethod
     def load(cls, state, hdf5):
+        instance = torch.load(state, map_location=cls.pick_device())
+        instance.device = instance.pick_device()
+        instance.hdf5 = hdf5
+        return instance
+
+    @classmethod
+    def old_load(cls, state, hdf5):
         instance = cls(
             hdf5,
             batch_size=state["batch_size"],
@@ -244,7 +266,7 @@ class ImageModel:
         self.model.eval()
         probs = []
 
-        for inputs, _ in tqdm(dataloader, desc="Batch", leave=False):
+        for inputs, _ in tqdm(dataloader, desc="Predicting", leave=False):
             inputs = inputs.to(self.device)
 
             with torch.no_grad():
