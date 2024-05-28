@@ -5,6 +5,7 @@ munch
 ohio
 openpyxl
 pandas
+psutil
 psycopg2-binary
 pyproj
 python-dotenv
