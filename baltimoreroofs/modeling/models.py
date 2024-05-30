@@ -79,7 +79,9 @@ def create_predictions_table(db, model_name):
     )
     try:
         db.run(
-            sql.SQL("CREATE UNIQUE INDEX {index} ON {dest} (blocklot)").format(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {index} ON {dest} (blocklot)"
+            ).format(
                 index=sql.Identifier(f"{model_name}_predictions_blocklot_idx"),
                 dest=sql.Identifier(db.OUTPUT_SCHEMA, f"{model_name}_predictions"),
             )
