@@ -29,9 +29,13 @@ class Reporter:
     def predictions(self, model_path, hdf5, blocklots, max_date):
         X_creator = MatrixCreator(self.db, hdf5)
         print(f"Predicting on {len(blocklots):,} blocklots")
+        print("Fetcing feature data from the database...")
         X = X_creator.build_features(blocklots, max_date)
+        print("Building dataset...")
         X, _, blocklots = flatten_X_y(X, {})
+        print("Loading model...")
         model, _ = load_model(model_path)
+        print("Predicting...")
         preds = model.predict_proba(X)
         return dict(zip(blocklots, preds[:, 1]))
 

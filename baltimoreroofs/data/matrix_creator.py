@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from tqdm.auto import tqdm
 
 from . import feature_building
 
@@ -62,11 +63,15 @@ class MatrixCreator:
 
     def build_features(self, blocklots: list[str], max_date: date):
         features = {}
-        for table in self.REQUIRED_TABLES + [
-            "dark_pixels",
-            "year_built",
-            "image_model",
-        ]:
+        for table in tqdm(
+            self.REQUIRED_TABLES
+            + [
+                "dark_pixels",
+                "year_built",
+                "image_model",
+            ],
+            desc="Building features",
+        ):
             features.update(
                 getattr(feature_building, f"build_{table}_features")(
                     self.db, blocklots, max_date, self.config.get(table, {})
